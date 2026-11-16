@@ -194,7 +194,7 @@ export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,w
 import { Engine } from '../ga/engine';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
-import {AutomaticSupply} from '../simulation/supply';
+import {AutomaticSupply,loadingComplete} from '../simulation/supply';
 export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
 let engine:Engine|null=null,run=0,paused=false,stopped=false,iterator:Generator<void,Generation,void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
 let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
@@ -217,18 +217,19 @@ function tick() {
         iterator=null;const g=result.value;
         send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
         const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        const filled=supply&&engine.population.some(p=>p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height);
+        const completeCandidates=supply?engine.population.filter(p=>loadingComplete(engine!.boxes,p,engine!.truck)):[];
+        const filled=completeCandidates.length>0;
         if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
-            const completed=engine.population.filter(p=>filled?p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height:p.evaluation.loaded===engine!.boxes.length);
-            const best=(completed.length?completed:engine.population).reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
+            const completed=filled?completeCandidates:engine.population.filter(p=>p.evaluation.loaded===engine!.boxes.length);
+            const best=(completed.length?completed:engine.population).reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=filled?null:supply.expand(best,engine.truck);
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
               next.inherit(engine,`r${previousRound}-`,best);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'짐칸 적재 부피 100% · 상차 완료',individual:displayIndividuals([best])[0]});
+            send('capacity',{message:best.evaluation.utilization>=1?'짐칸 적재 부피 100% · 상차 완료':'선택 개체에 최소 규격 상자(10×10×10cm)를 추가할 공간이 없습니다 · 상차 완료',individual:displayIndividuals([best])[0]});
           }
           paused=true;send('state',{state:'완료'});return;
         }
@@ -291,3 +292,5 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 최신 누적 처리와 함수 호출·검증·한계는 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`에 기록했다. 자동 공급에서는 기존 상자 ID를 보존하면서 좌표 이동을 허용하며, 이번 회차에서 움직인 상자당 1회·해당 중량을 기존 누적 비용에 더한다. 함수 입력·반환값과 실제 처리 순서는 위 코드의 주석·자료형을 따른다.
 
 - 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
+
+- 2026-11-16 19:44:49 (KST) 최종 조건 보완: 매 세대 한 개체라도100% 또는 최소 상자 추가 공간이 없으면 즉시 완료하며 해당 개체를 표시한다. 단순 입구 차단 제외.35개 테스트·빌드 성공. 앞선100% 단독 조건은 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md` 최종 절로 대체한다.

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {AutomaticSupply,availableLoadingSlot} from '../src/simulation/supply';
+import {AutomaticSupply,availableLoadingSlot,loadingComplete} from '../src/simulation/supply';
 import {Engine,finishGeneration} from '../src/ga/engine';
 import {DEFAULT_WEIGHTS,DEFAULT_SETTINGS,DEFAULT_TRUCK,generateBoxes,type Box,type Vec} from '../src/domain/model';
 /** 이미 상차된 작은 상자 목록을 만들어 공급 총량과 물리 공간을 분리해 검사한다. */
@@ -48,11 +48,19 @@ test('기본 공급량은 20개이고 사용자 공급량에는 임의 최대값
  assert.equal(new AutomaticSupply(boxes,1,137).expand(best,truck)!.length,155);
  assert.throws(()=>new AutomaticSupply(boxes,1,0));
 });
-test('상자가 끝나거나 최소 상자보다 작은 빈틈이 남아도 완료하지 않고 적재 부피 100%일 때만 종료한다',()=>{
+test('공급 생성기는 완료 판정과 별도로 적재 부피 100%이면 종료한다',()=>{
  const {boxes,best}=initial(),truck={width:20,depth:20,height:20};
  const supply=new AutomaticSupply(boxes,1);
  assert.ok(supply.expand({...best,evaluation:{...best.evaluation,loadedVolume:7500}},truck));
  assert.equal(supply.expand({...best,evaluation:{...best.evaluation,loadedVolume:8000}},truck),null);
+});
+test('완료는 현재 개체의 최소 상자 공간으로 판정하며 단순 입구 막힘은 제외한다',()=>{
+ const {boxes}=initial(),b=boxes.slice(0,1),small={width:25,depth:20,height:20};
+ const engine=new Engine(b,small,DEFAULT_SETTINGS,DEFAULT_WEIGHTS),best=engine.evaluate([[0,0,0]],[],'검사',false,[1])!;
+ assert.equal(best.evaluation.utilization,.8);assert.equal(loadingComplete(b,best,small),true);
+ const large={width:20,depth:100,height:20};
+ assert.equal(availableLoadingSlot(b,[[0,0,0]],large),null);
+ assert.equal(loadingComplete(b,best,large),false);
 });
 test('실제 Worker는 공급량 소진 시 세대 예산을 기다리지 않고 지정 묶음을 즉시 공급한다',async()=>{
  const {boxes,truck}=initial();const input=boxes.slice(0,1);
@@ -79,4 +87,14 @@ test('실제 Worker는 미적재 입력이 남아도 짐칸이 꽉 차면 세대
  scope.self.onmessage({data:{type:'start',run:100,boxes:boxes.slice(0,2),truck:{width:20,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
  const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
  assert.equal(completed,true);assert.equal(lastGeneration,1);assert.equal(supplied,false);assert.equal(full.evaluation.utilization,1);assert.equal(full.evaluation.loaded,1);
+});
+
+test('실제 Worker는 한 개체에 추가 공간이 없으면 100% 미만이어도 즉시 완료한다',async()=>{
+ const scope=globalThis as any;let full:any,completed=false;
+ let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='capacity')full=m.individual;if(m.type==='state'&&m.state==='완료'){completed=true;finish();}if(m.type==='error'){finish();throw Error(m.message);}};
+ const {boxes}=initial();
+ scope.self.onmessage({data:{type:'start',run:101,boxes:boxes.slice(0,2),truck:{width:25,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
+ const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
+ assert.equal(completed,true);assert.equal(full.generation,1);assert.equal(full.evaluation.utilization,.8);
 });

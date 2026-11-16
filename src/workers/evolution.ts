@@ -2,7 +2,7 @@
 import { Engine } from '../ga/engine';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
-import {AutomaticSupply} from '../simulation/supply';
+import {AutomaticSupply,loadingComplete} from '../simulation/supply';
 export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
 let engine:Engine|null=null,run=0,paused=false,stopped=false,iterator:Generator<void,Generation,void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
 let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
@@ -25,18 +25,19 @@ function tick() {
         iterator=null;const g=result.value;
         send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
         const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        const filled=supply&&engine.population.some(p=>p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height);
+        const completeCandidates=supply?engine.population.filter(p=>loadingComplete(engine!.boxes,p,engine!.truck)):[];
+        const filled=completeCandidates.length>0;
         if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
-            const completed=engine.population.filter(p=>filled?p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height:p.evaluation.loaded===engine!.boxes.length);
-            const best=(completed.length?completed:engine.population).reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
+            const completed=filled?completeCandidates:engine.population.filter(p=>p.evaluation.loaded===engine!.boxes.length);
+            const best=(completed.length?completed:engine.population).reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=filled?null:supply.expand(best,engine.truck);
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
               next.inherit(engine,`r${previousRound}-`,best);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'짐칸 적재 부피 100% · 상차 완료',individual:displayIndividuals([best])[0]});
+            send('capacity',{message:best.evaluation.utilization>=1?'짐칸 적재 부피 100% · 상차 완료':'선택 개체에 최소 규격 상자(10×10×10cm)를 추가할 공간이 없습니다 · 상차 완료',individual:displayIndividuals([best])[0]});
           }
           paused=true;send('state',{state:'완료'});return;
         }

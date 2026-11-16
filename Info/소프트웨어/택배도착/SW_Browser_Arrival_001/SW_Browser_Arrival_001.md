@@ -75,16 +75,21 @@ import {generateBoxes,Random,type Box,type Vec,type Truck,type Individual} from 
 import {type Placed,fits,blockers} from '../domain/packing';
 
 /** 현재 배치에서 최소 규격 상자가 들어갈 위치를 면 좌표의 조합으로 지연 탐색한다. */
-export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck):Vec|null {
+export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck,requireAccessible=true):Vec|null {
   const placed:Placed[]=boxes.flatMap((box,i)=>coords[i]?.[0]>=0?[{box,pos:coords[i]}]:[]);
   const probe:Box={id:-1,size:[10,10,10],weight:.1,priority:1,grade:0};
   const xs=new Set([0,truck.width-10]),ys=new Set([0,truck.depth-10]),zs=new Set([0]);
   for(const p of placed){xs.add(p.pos[0]);xs.add(p.pos[0]+p.box.size[0]);xs.add(p.pos[0]-10);ys.add(p.pos[1]);ys.add(p.pos[1]+p.box.size[1]);ys.add(p.pos[1]-10);zs.add(p.pos[2]+p.box.size[2]);}
   // 전체 좌표 조합 배열을 만들지 않고 첫 유효 위치에서 반환한다.
   for(const z of [...zs].sort((a,b)=>a-b))for(const y of ys)for(const x of xs){
-    const pos:Vec=[x,y,z];if(fits(probe,pos,placed,truck)&&!blockers({box:probe,pos},placed).length)return pos;
+    const pos:Vec=[x,y,z];if(fits(probe,pos,placed,truck)&&(!requireAccessible||!blockers({box:probe,pos},placed).length))return pos;
   }
   return null;
+}
+
+/** 현재 개체에 최소 생성 규격도 추가할 수 없는지 검사한다. 기존 상자는 이동 가능하므로 입구 막힘만으로 완료하지 않는다. */
+export function loadingComplete(boxes:Box[],individual:Individual,truck:Truck):boolean {
+  return individual.evaluation.loadedVolume>=truck.width*truck.depth*truck.height||availableLoadingSlot(boxes,individual.evaluation.finalCoords,truck,false)===null;
 }
 
 /** 총 공급 개수를 정하지 않고 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */
@@ -117,3 +122,5 @@ AutomaticSupply가 첫 입력 소진 후에도 처리 묶음별 새 상자를 �
 최신 동작과 검증은 `Info/plan/2026-11-16/192759_공급량설정과소진즉시공급_plan.md`에 기록했다. 초기·추가 공급은 기본 20개이며 사용자가 양의 정수로 설정한다. 모든 상자를 실은 후보가 나오면 즉시 다음 회차로 연결한다. 세대의 localNumber로 조기 전환 시 누적 세대와 회차 내 세대를 구별한다.
 
 - 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
+
+- 2026-11-16 19:44:49 (KST) 최종 조건 보완: 매 세대 한 개체라도100% 또는 최소 상자 추가 공간이 없으면 즉시 완료하며 해당 개체를 표시한다. 단순 입구 차단 제외.35개 테스트·빌드 성공. 앞선100% 단독 조건은 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md` 최종 절로 대체한다.
