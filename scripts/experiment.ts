@@ -1,0 +1,10 @@
+import { mkdirSync,writeFileSync } from 'node:fs';
+import { generateBoxes,DEFAULT_TRUCK,DEFAULT_SETTINGS,DEFAULT_WEIGHTS } from '../src/domain/model';
+import { runExperiments } from '../src/ga/experiments';
+const boxes=generateBoxes(10,2026),settings={...DEFAULT_SETTINGS,population:12,generations:10};
+const start=performance.now();
+const rows=await runExperiments(boxes,DEFAULT_TRUCK,settings,DEFAULT_WEIGHTS,()=>false,s=>process.stdout.write(s+'\n'));
+mkdirSync('artifacts',{recursive:true});
+const data={boxes,truck:DEFAULT_TRUCK,settings,weights:DEFAULT_WEIGHTS,seconds:(performance.now()-start)/1000,rows};
+writeFileSync('artifacts/experiment.json',JSON.stringify(data,null,2));
+console.log(JSON.stringify({seconds:data.seconds,runs:rows.length,averageGA:rows.reduce((a,b)=>a+b.gaScore,0)/rows.length,averageRandom:rows.reduce((a,b)=>a+b.randomScore,0)/rows.length,equalBudget:rows.every(r=>r.budget===r.randomEvaluations)},null,2));
