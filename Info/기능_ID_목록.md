@@ -113,3 +113,13 @@
 ## 2026-11-16 21:20:39 (KST) 현재 기준 — 첫 배포 상차 복원
 
 사용자의 최종 명시적 선택에 따라0db2361의 상차 버전으로 복원하고 상자 할당 입력(기본20)만 유지한다. 현재 상세 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 하차평가 확장·하중평가·50점 보상·추가 세대 조건은 현재 실행에서 제외되며 관련 과거 문서와 ID는 역사 기록으로 보존한다. 기존 Unloading 참조 소스는 첫 배포대로 남지만 앱 경로에서 호출하지 않는다.
+
+
+## SW_Browser_ResultExport_001 — 결과내보내기
+
+- 영역/실행환경: SW/Browser.
+- 분류: 소프트웨어/결과내보내기.
+- 책임: 완료시점자료확정·전체로드맵·그래프·3D·요약PNG/SVG/ZIP저장.
+- 문서: `Info/소프트웨어/결과내보내기/SW_Browser_ResultExport_001/SW_Browser_ResultExport_001.md`.
+- 관련ID: SW_Browser_EvolutionView_001, SW_Browser_Scene_001, SW_Browser_Evolution_001.
+- 상태:41개검사·빌드통과,최종브라우저상태는 `Info/plan/2026-11-17/001050_완료시점결과이미지다운로드_plan.md`.

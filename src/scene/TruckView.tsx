@@ -7,13 +7,15 @@ import { truckFrame,boxScenePosition,TRUCK_FRAME } from './truckFrame';
 import truckUrl from '../../Asset/7-5-t-class-box-truck-with-roll-up-door.glb?url';
 import palletUrl from '../../Asset/aws-warehouse/ClutteringC_01.glb?url';
 const COLORS=['#d4aa74','#94bb9b','#c4ae82','#8babb0','#c28a65'];
-interface Props {boxes:Box[];coords:Vec[];truck:Truck;events:MoveEvent[];step:number;fixed:Record<number,Vec>}
+export type SceneCapture=()=>{image:string;assetStatus:string};
+interface Props {captureRef?:{current:SceneCapture|null};boxes:Box[];coords:Vec[];truck:Truck;events:MoveEvent[];step:number;fixed:Record<number,Vec>}
 /** 빈 적재함 또는 고정 적재 상태에서 실제 상차 이벤트를 차례로 렌더링한다. SW_Browser_Scene_001 */
-export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
+export function TruckView({boxes,coords,truck,events,step,fixed,captureRef}:Props) {
   const host=useRef<HTMLDivElement>(null),api=useRef<{update:()=>void;home:()=>void}|null>(null);
   const current=useRef({boxes,coords,truck,events,step,fixed,exterior:false});
+  const assetRef=useRef('탑차 에셋 로딩 중');
   const [exterior,setExterior]=useState(false),[assetStatus,setAssetStatus]=useState('탑차 에셋 로딩 중'),[error,setError]=useState('');
-  current.current={boxes,coords,truck,events,step,fixed,exterior};
+  current.current={boxes,coords,truck,events,step,fixed,exterior};assetRef.current=assetStatus;
   useEffect(()=>{
     const el=host.current!;let alive=true;
     let renderer:THREE.WebGLRenderer;
@@ -56,6 +58,7 @@ export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
       }
     };
     api.current={update,home};update();
+    if(captureRef)captureRef.current=()=>{update();controls.update();renderer.render(scene,camera);const image=renderer.domElement.toDataURL('image/png');if(image==='data:,')throw Error('3D 캡처 크기를 확인하세요.');return {image,assetStatus:assetRef.current};};
     new GLTFLoader().load(truckUrl,g=>{
       retain(g.scene);if(!alive){for(const r of resources)r.dispose();return;}
       model=g.scene;model.updateMatrixWorld(true);model.traverse(n=>{if(n instanceof THREE.Mesh)n.userData.originalCenter=new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3());});vehicle.add(model);update();setAssetStatus('탑차 에셋 적용됨');
@@ -69,7 +72,7 @@ export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
     },undefined,()=>{if(alive)setAssetStatus(s=>s+' · 상자 재질 로딩 실패');});
     const resize=new ResizeObserver(()=>{const width=el.clientWidth,height=el.clientHeight;renderer.setSize(width,height);camera.aspect=width/Math.max(height,1);camera.updateProjectionMatrix();});resize.observe(el);
     renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera);});
-    return()=>{alive=false;api.current=null;resize.disconnect();controls.dispose();renderer.setAnimationLoop(null);for(const r of resources)r.dispose();renderer.dispose();renderer.domElement.remove();};
+    return()=>{alive=false;api.current=null;if(captureRef)captureRef.current=null;resize.disconnect();controls.dispose();renderer.setAnimationLoop(null);for(const r of resources)r.dispose();renderer.dispose();renderer.domElement.remove();};
   },[]);
   useEffect(()=>{api.current?.update();},[boxes,coords,truck,events,step,fixed,exterior]);
   return <div className="scene-wrap"><div ref={host} className="scene"/>{error&&<p className="scene-error">{error}</p>}<div className="scene-toolbar"><button onClick={()=>api.current?.home()}>시점 복원</button><button aria-pressed={exterior} onClick={()=>setExterior(x=>!x)}>{exterior?'외벽 숨기기':'외벽 보기'}</button></div><div className="scene-caption"><span><i/> {assetStatus}</span><span>드래그로 회전 · 휠로 확대</span></div></div>;

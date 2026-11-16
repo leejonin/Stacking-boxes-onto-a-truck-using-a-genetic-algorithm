@@ -47,13 +47,15 @@ import { truckFrame,boxScenePosition,TRUCK_FRAME } from './truckFrame';
 import truckUrl from '../../Asset/7-5-t-class-box-truck-with-roll-up-door.glb?url';
 import palletUrl from '../../Asset/aws-warehouse/ClutteringC_01.glb?url';
 const COLORS=['#d4aa74','#94bb9b','#c4ae82','#8babb0','#c28a65'];
-interface Props {boxes:Box[];coords:Vec[];truck:Truck;events:MoveEvent[];step:number;fixed:Record<number,Vec>}
+export type SceneCapture=()=>{image:string;assetStatus:string};
+interface Props {captureRef?:{current:SceneCapture|null};boxes:Box[];coords:Vec[];truck:Truck;events:MoveEvent[];step:number;fixed:Record<number,Vec>}
 /** 빈 적재함 또는 고정 적재 상태에서 실제 상차 이벤트를 차례로 렌더링한다. SW_Browser_Scene_001 */
-export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
+export function TruckView({boxes,coords,truck,events,step,fixed,captureRef}:Props) {
   const host=useRef<HTMLDivElement>(null),api=useRef<{update:()=>void;home:()=>void}|null>(null);
   const current=useRef({boxes,coords,truck,events,step,fixed,exterior:false});
+  const assetRef=useRef('탑차 에셋 로딩 중');
   const [exterior,setExterior]=useState(false),[assetStatus,setAssetStatus]=useState('탑차 에셋 로딩 중'),[error,setError]=useState('');
-  current.current={boxes,coords,truck,events,step,fixed,exterior};
+  current.current={boxes,coords,truck,events,step,fixed,exterior};assetRef.current=assetStatus;
   useEffect(()=>{
     const el=host.current!;let alive=true;
     let renderer:THREE.WebGLRenderer;
@@ -96,6 +98,7 @@ export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
       }
     };
     api.current={update,home};update();
+    if(captureRef)captureRef.current=()=>{update();controls.update();renderer.render(scene,camera);const image=renderer.domElement.toDataURL('image/png');if(image==='data:,')throw Error('3D 캡처 크기를 확인하세요.');return {image,assetStatus:assetRef.current};};
     new GLTFLoader().load(truckUrl,g=>{
       retain(g.scene);if(!alive){for(const r of resources)r.dispose();return;}
       model=g.scene;model.updateMatrixWorld(true);model.traverse(n=>{if(n instanceof THREE.Mesh)n.userData.originalCenter=new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3());});vehicle.add(model);update();setAssetStatus('탑차 에셋 적용됨');
@@ -109,7 +112,7 @@ export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
     },undefined,()=>{if(alive)setAssetStatus(s=>s+' · 상자 재질 로딩 실패');});
     const resize=new ResizeObserver(()=>{const width=el.clientWidth,height=el.clientHeight;renderer.setSize(width,height);camera.aspect=width/Math.max(height,1);camera.updateProjectionMatrix();});resize.observe(el);
     renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera);});
-    return()=>{alive=false;api.current=null;resize.disconnect();controls.dispose();renderer.setAnimationLoop(null);for(const r of resources)r.dispose();renderer.dispose();renderer.domElement.remove();};
+    return()=>{alive=false;api.current=null;if(captureRef)captureRef.current=null;resize.disconnect();controls.dispose();renderer.setAnimationLoop(null);for(const r of resources)r.dispose();renderer.dispose();renderer.domElement.remove();};
   },[]);
   useEffect(()=>{api.current?.update();},[boxes,coords,truck,events,step,fixed,exterior]);
   return <div className="scene-wrap"><div ref={host} className="scene"/>{error&&<p className="scene-error">{error}</p>}<div className="scene-toolbar"><button onClick={()=>api.current?.home()}>시점 복원</button><button aria-pressed={exterior} onClick={()=>setExterior(x=>!x)}>{exterior?'외벽 숨기기':'외벽 보기'}</button></div><div className="scene-caption"><span><i/> {assetStatus}</span><span>드래그로 회전 · 휠로 확대</span></div></div>;
@@ -148,3 +151,13 @@ export function boxScenePosition(frame:SceneFrame,pos:Vec,size:Vec):Vec {
 ## 2026-11-16 21:20:39 (KST) 첫 배포 복원
 
 사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.
+
+
+## 2026-11-17 00:10:50 (KST) 완료 시점 내보내기 연결
+
+계획 `Info/plan/2026-11-17/001050_완료시점결과이미지다운로드_plan.md`. 완료 확정·3D 캡처·실제 가중치 스냅샷 사용처를 연결했다. 주목적·상차 점수 유지. 실제코드 전체갱신.41개검사·빌드통과,브라우저최종결과는계획참조.
+
+
+## 2026-11-17 00:18:02 (KST) 직접 다운로드 검증 완료
+
+완료전잠금·23개완성세대확정·PNG/SVG/ZIP31파일·완료후다른개체선택시같은3D해시·초기화/새실행재잠금·수동완료구분을확인했다.최종회차별seed메타데이터와실제코드스냅샷갱신.상세근거·한계·배포는`Info/plan/2026-11-17/001050_완료시점결과이미지다운로드_plan.md` 참조.

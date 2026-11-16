@@ -2,6 +2,9 @@ import { useEffect,useMemo,useRef,useState } from 'react';
 import { DEFAULT_SETTINGS,DEFAULT_TRUCK,DEFAULT_WEIGHTS,GRADES,generateBoxes,validateConfig,type Box,type Vec,type Truck,type Settings,type Weights,type Individual,type Generation } from '../domain/model';
 import { simulateLoading } from '../simulation/loading';
 import { Arrival } from '../simulation/arrival';
+import {ResultExport} from './ResultExport';
+import {finalizeResult,type ResultSnapshot} from '../export/report';
+import type {SceneCapture} from '../scene/TruckView';
 import { TruckView } from '../scene/TruckView';
 import { GenerationTree } from './GenerationTree';
 import type { Command } from '../workers/evolution';
@@ -23,6 +26,8 @@ export function App() {
   const [automatic,setAutomatic]=useState(true),[supplyRound,setSupplyRound]=useState(1);
   const [sequential,setSequential]=useState(false),[arrival,setArrival]=useState<Arrival|null>(null),[arrivalTick,setArrivalTick]=useState(0);
   const [experimentState,setExperimentState]=useState(''),[results,setResults]=useState<ExperimentRow[]>([]);
+  const [snapshot,setSnapshot]=useState<ResultSnapshot|null>(null);
+  const captureRef=useRef<SceneCapture|null>(null),weightVersions=useRef<Record<number,Weights>>({1:{...DEFAULT_WEIGHTS}});
   const worker=useRef<Worker|null>(null),experimentWorker=useRef<Worker|null>(null),run=useRef(0),followRef=useRef(follow),configRef=useRef({boxes,truck,settings,applied});
   followRef.current=follow;configRef.current={boxes,truck,settings,applied};
   const busy=state==='실행',locked=history.length>0||busy||state==='일시정지';
@@ -45,7 +50,7 @@ export function App() {
       if(m.type==='capacity')setMessage(m.message);
       if(m.type==='error'){setMessage(m.message);setState('오류');}
       if(m.type==='generation') {setAllocationProgress(null);const g=m.generation as Generation;setHistory(h=>[...h,g]);if(followRef.current)setSelected(g.individuals.reduce((a,b)=>a.score>=b.score?a:b));}
-      if(m.type==='reweighted') {setSelected(s=>s?m.individuals.find((p:Individual)=>p.id===s.id)??s:null);setMessage(`가중치 v${m.version} 적용 · 현재 집단 재평가 완료. 이어서 실행할 수 있습니다.`);}
+      if(m.type==='reweighted') {weightVersions.current[m.version]={...m.weights};setSelected(s=>s?m.individuals.find((p:Individual)=>p.id===s.id)??s:null);setMessage(`가중치 v${m.version} 적용 · 현재 집단 재평가 완료. 이어서 실행할 수 있습니다.`);}
     };
     w.onerror=e=>{setMessage(e.message||'계산 Worker를 실행할 수 없습니다.');setState('오류');};
     return {w,id};
@@ -56,19 +61,31 @@ export function App() {
       const input=automatic?generateBoxes(count,inputSeed):activeBoxes;
       validateConfig(input,truck,settings,weights);
       if(!automatic&&Object.keys(fixed).length===activeBoxes.length&&sequential)throw Error('모든 도착 상자가 적재되었습니다. 다음 상자를 도착시키세요.');
-      const {w,id}=createWorker();setHistory([]);setSelected(null);setAllocationProgress({generation:1,boxes:input.length,population:settings.population,ready:0,mostLoaded:0,attempts:0});setStep(0);setPlaying(false);setMessage('');setFollow(true);setApplied({...weights});setState('실행');
+      const {w,id}=createWorker();setSnapshot(null);weightVersions.current={1:{...weights}};setHistory([]);setSelected(null);setAllocationProgress({generation:1,boxes:input.length,population:settings.population,ready:0,mostLoaded:0,attempts:0});setStep(0);setPlaying(false);setMessage('');setFollow(true);setApplied({...weights});setState('실행');
       if(automatic){setBoxes(input);setSupplyRound(1);}
       w.postMessage({type:'start',run:id,boxes:input,truck,settings,weights,fixed:automatic?{}:fixed,arrival:sequential,automatic,inputSeed,requireFullAllocation:true} satisfies Command);
     }catch(e){setMessage((e as Error).message);}
   }
+  /** 완료 시점의 결과·카메라·재생 단계를 확정하고 늦은 Worker 응답을 차단한다. */
+  function complete() {
+    if(!history.length||snapshot)return;
+    let image:string|null=null,assetStatus='',captureError='';
+    try{if(!captureRef.current)throw Error('3D 캡처를 사용할 수 없습니다.');const c=captureRef.current();image=c.image;assetStatus=c.assetStatus;}catch(e){captureError=(e as Error).message;}
+    const final=finalizeResult({schema:1,completedAt:new Date().toISOString(),history,selected,truck,settings,inputSeed,batchCount:count,automatic,
+      weights:{...weightVersions.current,...Object.fromEntries(history.filter(g=>g.weights).map(g=>[g.version,g.weights]))},
+      scene:{image,step,totalSteps:events.length,events,boxes:viewBoxes,fixed:viewFixed,assetStatus,error:captureError}} satisfies ResultSnapshot);
+    worker.current?.terminate();worker.current=null;run.current++;setPlaying(false);setAllocationProgress(null);setState('결과 확정');setSnapshot(final);
+    setMessage(`완료 시점의 ${history.length}개 세대를 확정했습니다. 준비 중 세대는 제외하며 다운로드가 가능합니다.${captureError?' 3D 캡처 제외: '+captureError:''}`);
+  }
   /** 입력은 유지하고 계산·선택·재생 기록을 비운다. */
-  function clear() {worker.current?.terminate();worker.current=null;run.current++;setHistory([]);setSelected(null);setAllocationProgress(null);setStep(0);setPlaying(false);setState('준비');setSupplyRound(1);setMessage('');}
+  function clear() {setSnapshot(null);worker.current?.terminate();worker.current=null;run.current++;setHistory([]);setSelected(null);setAllocationProgress(null);setStep(0);setPlaying(false);setState('준비');setSupplyRound(1);setMessage('');}
   /** 입력 목록을 동일 seed로 재생성한다. 순차 모드는 도착도 처음부터 시작한다. */
   function generate(mode=sequential) {
     try {const b=generateBoxes(count,inputSeed);clear();setBoxes(b);setResults([]);setArrival(mode?new Arrival(b,inputSeed^0xA771):null);setArrivalTick(t=>t+1);}catch(e){setMessage((e as Error).message);}
   }
   /** 가중치만 현재 집단에 적용하고 세대별 당시 점수는 보존한다. */
   function apply() {
+    if(snapshot){setMessage('완료 결과는 확정되어 있습니다. 새 실행에서 가중치를 변경하세요.');return;}
     try {validateConfig(activeBoxes.length?activeBoxes:boxes,truck,settings,weights);setApplied({...weights});if(worker.current&&history.length){worker.current.postMessage({type:'weights',run:run.current,weights} satisfies Command);}else setMessage('다음 실행의 기본 평가에 반영했습니다.');}
     catch(e){setMessage((e as Error).message);}
   }
@@ -100,11 +117,11 @@ export function App() {
     <main className="workspace">
       <div className="left-column">
         <section className="panel viewer-panel"><div className="panel-heading"><div><span className="section-index">01</span><h2>배치 살펴보기</h2></div><span className="tag">{selected?`${selected.generation}세대 · ${selected.id}`:'개체를 선택하세요'}</span></div>
-          <TruckView boxes={viewBoxes} coords={selected?.coords??[]} truck={truck} events={events} step={step} fixed={viewFixed}/>
+          <TruckView captureRef={captureRef} boxes={viewBoxes} coords={selected?.coords??[]} truck={truck} events={events} step={step} fixed={viewFixed}/>
           <div className="individual-stats"><div><small>선택 개체 점수</small><b>{selected?number(selected.score):'—'}<em>점</em></b></div><div><small>상차 재배치</small><b>{selected?.evaluation.moves??'—'}<em>회</em></b></div><div><small>재배치 중량</small><b>{selected?number(selected.evaluation.mass):'—'}<em>kg</em></b></div><div><small>누적 상차 개수</small><b>{selected?selected.evaluation.loaded:'—'}<em>개</em></b></div></div>
           <div className="loading-summary">{selected?`적재함 부피 활용 ${(selected.evaluation.utilization*100).toFixed(1)}% · 공간 집중도 ${(selected.evaluation.compactness*100).toFixed(1)}% · 미적재 ${selected.evaluation.unloadedIds.length}개`:"상자 겹침·공중부양 없이 실제로 실린 양을 평가합니다."}<details><summary>상차 순서와 미적재 확인</summary><p>시도 순서: {selected?.loadOrder.map(id=>`#${id}`).join(" → ")||"—"}</p><p>실제 상차: {events.filter(e=>e.kind==='load').map(e=>`#${e.boxId}`).join(" → ")||"—"}</p><p>미적재: {selected?.evaluation.unloadedIds.map(id=>`#${id}`).join(", ")||"없음"}</p></details></div><div className="replay"><div className="replay-controls"><button disabled={!selected} onClick={()=>{setFollow(false);setPlaying(p=>!p);if(step===events.length)setStep(0);}}>{playing?'Ⅱ 재생 정지':'▷ 상차 재생'}</button><input aria-label="상차 재생 단계" type="range" min="0" max={events.length} value={Math.min(step,events.length)} onChange={e=>{setPlaying(false);setStep(+e.target.value);}} disabled={!selected}/><span>{step}/{events.length}</span></div><p>{currentEvent?`#${currentEvent.boxId} ${currentEvent.kind==='load'?'최초 상차':currentEvent.kind==='out'?'상차 방해물 재배치':'재배치 상자 복귀'} · 누적 ${currentEvent.moves}회 / ${number(currentEvent.mass)}kg`:'빈 적재함에서 시작 · 입구로 상자 투입 · 최초 상차는 재배치에서 제외'}</p></div>
         </section>
-        <section className="panel weights-panel"><div className="panel-heading"><div><span className="section-index">02</span><h2>평가 가중치</h2></div><span className="tag green-tag">상차 평가</span></div><p className="panel-description">적재 개수·부피와 공간 집중도를 보상하고, 상차 재배치를 감점합니다.</p><div className="weight-fields"><Field label="적재량 보상" value={weights.base} onChange={v=>setWeights(w=>({...w,base:v}))}/><Field label="재이동 1회 감점" value={weights.moves} min={0} onChange={v=>setWeights(w=>({...w,moves:v}))}/><Field label="공간 집중도 보상" value={weights.space??20} min={0} onChange={v=>setWeights(w=>({...w,space:v}))}/><Field label="중량 1kg 감점" value={weights.mass} min={0} step={.1} onChange={v=>setWeights(w=>({...w,mass:v}))}/></div><div className="formula">{applied.base} × 적재율 + {applied.space??20} × 공간집중도 − {applied.moves} × 재배치횟수 − {applied.mass} × 재배치kg</div><div className="weight-footer"><span>적재율 = (개수 비율 + 부피 비율) ÷ 2</span><button className="apply" onClick={apply}>가중치 적용 ↗</button></div></section>
+        <section className="panel weights-panel"><div className="panel-heading"><div><span className="section-index">02</span><h2>평가 가중치</h2></div><span className="tag green-tag">상차 평가</span></div><p className="panel-description">적재 개수·부피와 공간 집중도를 보상하고, 상차 재배치를 감점합니다.</p><div className="weight-fields"><Field disabled={!!snapshot} label="적재량 보상" value={weights.base} onChange={v=>setWeights(w=>({...w,base:v}))}/><Field disabled={!!snapshot} label="재이동 1회 감점" value={weights.moves} min={0} onChange={v=>setWeights(w=>({...w,moves:v}))}/><Field disabled={!!snapshot} label="공간 집중도 보상" value={weights.space??20} min={0} onChange={v=>setWeights(w=>({...w,space:v}))}/><Field disabled={!!snapshot} label="중량 1kg 감점" value={weights.mass} min={0} step={.1} onChange={v=>setWeights(w=>({...w,mass:v}))}/></div><div className="formula">{applied.base} × 적재율 + {applied.space??20} × 공간집중도 − {applied.moves} × 재배치횟수 − {applied.mass} × 재배치kg</div><div className="weight-footer"><span>적재율 = (개수 비율 + 부피 비율) ÷ 2</span><button className="apply" onClick={apply}>가중치 적용 ↗</button></div></section>
         <section className="panel input-panel"><details><summary><span className="section-index">03</span> 입력과 탐색 설정 <span>펼치기 ＋</span></summary><div className="details-content"><h3>택배 입력</h3><label className="checkbox"><input type="checkbox" checked={automatic} disabled={locked} onChange={e=>{setAutomatic(e.target.checked);if(e.target.checked){setSequential(false);setArrival(null);}}}/>상자 자동 공급 · 총 개수 제한 없음</label><p className="help">탐색이 끝나도 다음 상자를 자동 생성합니다. 상자 할당 개수는 최초 입력과 다음 공급 묶음에 동일하게 적용합니다. 할당된 상자를 모두 실제 적재한 개체만 다음 세대에 포함하며, 유효 집단이 완성되기 전에는 세대를 올리지 않습니다. 현재 배치에서 추가 상차 공간·경로가 없거나 정지할 때까지 계속합니다.</p><div className="fields"><Field label={automatic?"상자 할당 개수 (회당)":"실험용 고정 상자 수"} value={count} min={1} disabled={locked} onChange={setCount}/><Field label="입력 seed" value={inputSeed} min={0} max={4294967295} disabled={locked} onChange={setInputSeed}/></div><div className="grade-legend">{GRADES.map((g,i)=><span key={g.name}><i style={{background:['#d4aa74','#94bb9b','#c4ae82','#8babb0','#c28a65'][i]}}/>{g.name} {boxes.filter(b=>b.grade===i).length}</span>)}</div><p className="help">5등급 각 20% 추첨 · 최대 160cm / 20kg · 최장변 100cm</p><div className="inline"><button disabled={locked} onClick={()=>generate()}>상자 다시 생성</button><button onClick={()=>setBoxList(b=>!b)}>{boxList?'목록 닫기':'상자 목록'}</button></div>
           <label className="checkbox"><input type="checkbox" checked={sequential} disabled={locked||automatic} onChange={e=>{setSequential(e.target.checked);generate(e.target.checked);}}/>순차 도착 모드 · 대기 공간 40개</label>
           {sequential&&arrival&&<div className="arrival"><p>도착 {arrival.cursor}/{boxes.length} · 대기 {arrival.waiting.length}/40 · 적재 {arrival.loaded.length}</p><div className="inline"><button disabled={busy||state==='일시정지'} onClick={receive}>다음 상자 도착</button><button disabled={!selected||busy||state==='일시정지'||!arrival.waiting.length} onClick={commit}>선택 배치 상차</button></div><p className="help">도착 → GA 실행 → 정지/완료 → 배치 선택 → 상차 확정. 기존 적재 좌표는 고정됩니다.</p><ol className="arrival-log">{arrival.log.slice(-5).map((s,i)=><li key={i}>{s}</li>)}</ol></div>}
@@ -116,7 +133,8 @@ export function App() {
         <div className="tree-footer"><span>{selected?`${selected.operation}${selected.repaired?' · 유효 배치 수정':''} · 평가 v${selected.version}`:'개체를 클릭하면 왼쪽에 실제 배치를 표시합니다.'}</span><span>드래그 대신 스크롤로 계보 탐색 ↔</span></div>
       </section>
     </main>
-    <section className="control-dock"><div className="dock-label"><span className="pulse"/><div><b>진화 실행</b><small>{automatic?`자동 공급 ${supplyRound}회차 · 할당 ${count}개 · 총량 제한 없음`:`입력 ${activeBoxes.length}개`} · 집단 {settings.population}</small></div></div><div className="controls"><button className="primary" disabled={busy} onClick={start}>▶ 처음부터 시작</button><button disabled={!busy} onClick={()=>worker.current?.postMessage({type:'pause',run:run.current})}>Ⅱ 일시정지</button><button disabled={state!=='일시정지'} onClick={()=>worker.current?.postMessage({type:'resume',run:run.current})}>▷ 이어서 실행</button><button disabled={!busy&&state!=='일시정지'} onClick={()=>worker.current?.postMessage({type:'stop',run:run.current})}>■ 정지</button><button className="reset" onClick={clear}>↺ 초기화</button></div></section>
+    <section className="control-dock"><div className="dock-label"><span className="pulse"/><div><b>진화 실행</b><small>{automatic?`자동 공급 ${supplyRound}회차 · 할당 ${count}개 · 총량 제한 없음`:`입력 ${activeBoxes.length}개`} · 집단 {settings.population}</small></div></div><div className="controls"><button className="primary" disabled={busy} onClick={start}>▶ 처음부터 시작</button><button disabled={!busy} onClick={()=>worker.current?.postMessage({type:'pause',run:run.current})}>Ⅱ 일시정지</button><button disabled={state!=='일시정지'} onClick={()=>worker.current?.postMessage({type:'resume',run:run.current})}>▷ 이어서 실행</button><button disabled={!busy&&state!=='일시정지'} onClick={()=>worker.current?.postMessage({type:'stop',run:run.current})}>■ 정지</button><button className="complete" disabled={!history.length||!!snapshot} onClick={complete}>✓ 완료 · 결과 확정</button><button className="reset" onClick={clear}>↺ 초기화</button></div></section>
+    <ResultExport key={snapshot?.completedAt??'pending'} snapshot={snapshot}/>
     {message&&<div className="notice" role="alert">{message}<button aria-label="알림 닫기" onClick={()=>setMessage('')}>×</button></div>}
     {boxList&&<section className="panel box-list"><div className="panel-heading"><h2>생성된 상자 목록</h2><span>모든 개체가 같은 입력을 공유합니다.</span></div><div className="table-scroll"><table><thead><tr><th>ID</th><th>등급</th><th>가로 × 세로 × 높이 (cm)</th><th>무게 (kg)</th><th>참고 우선도</th><th>도착 상태</th></tr></thead><tbody>{boxes.map(b=><tr key={b.id}><td>#{b.id}</td><td>{GRADES[b.grade].name}</td><td>{b.size.join(' × ')}</td><td>{b.weight}</td><td>{b.priority}</td><td>{automatic?'자동 공급 후보':!sequential?'전체 입력':fixed[b.id]?'적재 고정':activeBoxes.some(a=>a.id===b.id)?'대기':'미도착'}</td></tr>)}</tbody></table></div></section>}
     <section className="panel experiment-panel"><details><summary>무작위 배치와 비교 실험<span>동일 입력 · 동일 평가 예산 · 3개 seed</span></summary><div className="details-content"><p>교차율 0/0.6/0.9, 선택 k=2/3/5, 변이율 0/0.05/0.2를 각각 비교합니다. 현재 집단·총 세대 설정으로 27회 실행하므로 시간이 걸릴 수 있습니다. 현재 GA와 독립적으로 계산합니다.</p><div className="inline"><button className="apply" disabled={busy||!!(experimentState&&!experimentState.includes('완료')&&!experimentState.includes('취소')&&!experimentState.includes('오류'))} onClick={experiment}>비교 실험 시작</button><button onClick={()=>{experimentWorker.current?.terminate();setExperimentState('실험 취소');}}>실험 취소</button><button disabled={!results.length} onClick={()=>saveJson({input:(experimentWorker.current as Worker&{snapshot?:unknown})?.snapshot,results,summaries})}>결과 JSON 저장</button><span role="status">{experimentState}</span></div>{summaries.length>0&&<div className="table-scroll"><table><thead><tr><th>조건</th><th>GA 평균 점수</th><th>무작위 최고 평균</th><th>GA 평균 적재 개수</th><th>GA 평균 재배치</th><th>GA 평균 중량</th></tr></thead><tbody>{summaries.map(s=><tr key={s.condition}><td>{s.condition}</td><td>{number(s.ga)}</td><td>{number(s.random)}</td><td>{number(s.loaded)}개</td><td>{number(s.moves)}회</td><td>{number(s.mass)}kg</td></tr>)}</tbody></table><p className="help">각 조건의 seed 11·29·47 평균. 개선되지 않은 결과도 그대로 표시합니다. JSON에 각 실행의 평가 예산과 원자료를 포함합니다.</p></div>}</div></details></section>
