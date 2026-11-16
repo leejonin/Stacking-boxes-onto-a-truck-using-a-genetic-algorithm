@@ -8,3 +8,7 @@
 - 검증:35개 테스트·빌드 통과. 실제 Worker에서100% 완료와80% 적재·남은 폭5cm의 추가 불가 완료를1세대에 각각 확인. 입구만 막힌 배치는 완료하지 않는 검사 통과.
 - 한계: 현재 개체 공간 검사이며 모든 재배치의 전역 최적성 증명 아님. 직접 브라우저 조작 미확인. 기존 큰 번들 경고 유지.
 - Git: 승인된 Public 프로젝트·Pages 범위에서 해당 변경만 반영한다.
+
+## 2026-11-16 19:46:04 (KST) 최종 배포 확인
+
+35개 테스트·최종 빌드 성공. 소스 main 4bda7d0, gh-pages 052695662130eed2b6c370303310a2bd51c83b8a, Actions 43851625373 success·Pages built. 공개 HTML·최신 UI(index-D49PXkHl.js)·Worker(evolution-eXHKzQi3.js) HTTP200, 누적 재이동 설명·최소 상자 추가 불가 조건·기존 상자 유실 거부 코드가 공개 파일에 반영됨을 확인했다. 직접 브라우저 조작 확인과는 구별한다. 배포 URL: https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/ . 기존100% 단독 완료 기록은 최종 사용자 보완 조건으로 대체된다.

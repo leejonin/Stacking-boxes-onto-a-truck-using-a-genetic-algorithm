@@ -8,3 +8,7 @@
 - 검증: 최종33개 테스트·빌드 성공. 실제 Worker에서2개 입력/1개 용량/100세대 예산인데1세대에 실제 가득 찬 개체를 전달하고 추가 공급 없이 완료. 500cm³ 빈틈은 완료하지 않는 공급 검사 통과. 실제 누적 공급 검사와 손계산은 위 계획 및 앞선 day 참조.
 - 한계: 무작위 상자로100%에 도달하지 못하면 자동 종료되지 않음. 사용자 정지 가능. 새 브라우저 직접 조작 미확인. 기존 큰 번들 경고 유지.
 - Git: 기존 Public 전체 프로젝트·Pages 승인 범위의 해당 변경만 반영 예정.
+
+## 2026-11-16 19:46:04 (KST) 최종 배포 확인
+
+35개 테스트·최종 빌드 성공. 소스 main 4bda7d0, gh-pages 052695662130eed2b6c370303310a2bd51c83b8a, Actions 43851625373 success·Pages built. 공개 HTML·최신 UI(index-D49PXkHl.js)·Worker(evolution-eXHKzQi3.js) HTTP200, 누적 재이동 설명·최소 상자 추가 불가 조건·기존 상자 유실 거부 코드가 공개 파일에 반영됨을 확인했다. 직접 브라우저 조작 확인과는 구별한다. 배포 URL: https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/ . 기존100% 단독 완료 기록은 최종 사용자 보완 조건으로 대체된다.
