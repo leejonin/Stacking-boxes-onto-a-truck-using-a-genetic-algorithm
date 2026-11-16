@@ -5,7 +5,7 @@ export interface ExperimentRow { condition:string;seed:number;gaScore:number;ran
 /** 동일 후보 평가 예산·상자 목록으로 3개 seed와 계획서의 9개 조건을 비교한다. */
 export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,weights:Weights,cancel:()=>boolean,progress:(s:string)=>void,priorityUnloading=false):Promise<ExperimentRow[]> {
   const result:ExperimentRow[]=[];
-  const conditions=[...[0,.6,.9].map(c=>({name:`교차 ${c}`,patch:{crossover:c}})),...[2,3,5].map(k=>({name:`선택 k=${k}`,patch:{tournament:k}})),...[0,.05,.2].map(m=>({name:`변이 ${m}`,patch:{mutation:m}}))];
+  const conditions=[...[(priorityUnloading ? .1 : 0),.6,.9].map(c=>({name:`교차 ${c}`,patch:{crossover:c}})),...[2,3,5].map(k=>({name:`선택 k=${k}`,patch:{tournament:k}})),...[(priorityUnloading ? .01 : 0),.05,.2].map(m=>({name:`변이 ${m}`,patch:{mutation:m}}))];
   for(const c of conditions)for(const seed of [11,29,47]) {
     if(cancel())return result;
     progress(`${c.name} · seed ${seed}`);

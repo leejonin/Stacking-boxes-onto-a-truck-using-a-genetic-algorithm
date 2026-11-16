@@ -24,7 +24,7 @@ test('자동 공급 마지막 묶음은 남은 한도만 채우고 누적400에�
 });
 const scope=globalThis as any;scope.self={onmessage:()=>{}};scope.postMessage=()=>{};await import('../src/workers/evolution');
 for(const count of [100,256,360,400])test(`${count}개 비기본 설정과 첫 세대 전 가중치 변경이 실제 Worker의 두 세대에 반영된다`,async()=>{
- const run=5000+count,settings={...DEFAULT_SETTINGS,population:6,generations:2,crossover:.65,mutation:.17,tournament:4,seed:913},truck={width:320,depth:700,height:300},weights={base:137,moves:3,mass:.3,space:31};
+ const run=5000+count,settings={...DEFAULT_SETTINGS,population:6,generations:2,crossover:.65,mutation:.17,tournament:4,seed:913},truck={width:320,depth:700,height:300},weights={base:137,moves:3,mass:1.3,space:31};
  let finish!:()=>void;const done=new Promise<void>(r=>{finish=r;});const generations:any[]=[];let error='',version=0;
  scope.postMessage=(m:any)=>{if(m.run!==run)return;if(m.type==='error'){error=m.message;finish();}if(m.type==='reweighted'){version=m.version;scope.self.onmessage({data:{type:'resume',run}});}if(m.type==='generation'){generations.push(m.generation);if(generations.length===2){scope.self.onmessage({data:{type:'stop',run}});finish();}}};
  scope.self.onmessage({data:{type:'start',run,boxes:generateBoxes(count,731),truck,settings,weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,requireFullAllocation:true,priorityUnloading:true}});

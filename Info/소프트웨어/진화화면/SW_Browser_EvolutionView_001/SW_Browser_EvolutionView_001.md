@@ -44,8 +44,9 @@ GenerationTree는 최신 세대부터 역순 배치해 최초 세대가 아래�
 ### `src/ui/App.tsx`
 
 ```tsx
+import {CONFIG_RANGES as R,normalizeNumber,validateWebConfig,effectiveCrossover} from '../domain/ranges';
 import { useEffect,useMemo,useRef,useState } from 'react';
-import { MIN_BOXES,MAX_BOXES,normalizeBoxCount,resolveBoxInput,DEFAULT_SETTINGS,DEFAULT_TRUCK,DEFAULT_WEIGHTS,GRADES,generateBoxes,validateConfig,type Box,type Vec,type Truck,type Settings,type Weights,type Individual,type Generation } from '../domain/model';
+import { MIN_BOXES,MAX_BOXES,normalizeBoxCount,resolveBoxInput,DEFAULT_SETTINGS,DEFAULT_TRUCK,DEFAULT_WEIGHTS,GRADES,generateBoxes,type Box,type Vec,type Truck,type Settings,type Weights,type Individual,type Generation } from '../domain/model';
 import {priorityOrder,priorityColor} from '../domain/priority';
 import {simulate as simulateUnloading} from '../simulation/unload';
 import { simulateLoading } from '../simulation/loading';
@@ -63,7 +64,12 @@ function number(n:number) {return n.toLocaleString('ko-KR',{maximumFractionDigit
 /** 실험 결과·입력·실행 설정을 사용자의 파일로 보관한다. */
 function saveJson(data:unknown) {const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='loadlab-experiment.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 /** 숫자 입력에 단위와 범위를 표시한다. */
-function Field({label,value,onChange,onBlur,min,max,step=1,disabled=false}:{label:string;value:number;onChange:(v:number)=>void;onBlur?:()=>void;min?:number;max?:number;step?:number;disabled?:boolean}) {return <label className="field"><span>{label}</span><input type="number" value={Number.isNaN(value)?'':value} min={min} max={max} step={step} disabled={disabled} onBlur={onBlur} onChange={e=>onChange(e.target.value===''?NaN:Number(e.target.value))}/></label>;}
+function Field({label,value,onChange,onBlur,min,max,step=1,disabled=false}:{label:string;value:number;onChange:(v:number)=>void;onBlur?:()=>void;min?:number;max?:number;step?:number|'any';disabled?:boolean}) {
+ const [warning,setWarning]=useState('');
+ /** 편집 중에는 입력을 유지하고 포커스를 옮길 때 범위·정수 조건을 적용한다. */
+ function commit(){if(onBlur){onBlur();return;}if(min===undefined||max===undefined)return;const next=normalizeNumber(value,{min,max,integer:step===1});if(!Object.is(value,next)){onChange(next);setWarning(`${label}: ${min}~${max} 범위로 ${next}을 적용했습니다.`);}}
+ return <label className="field"><span>{label}</span><input aria-label={label} type="number" value={Number.isNaN(value)?'':value} min={min} max={max} step={step} disabled={disabled} onBlur={commit} onChange={e=>{setWarning('');onChange(e.target.value===''?NaN:Number(e.target.value));}}/>{warning&&<small role="alert" className="field-warning">{warning}</small>}</label>;
+}
 /** GA의 계산·세대 선택·3D 재생과 설정 적용을 연결하는 로컬 웹 진입점. */
 export function App() {
   const [count,setCount]=useState(20),[countWarning,setCountWarning]=useState(''),[inputSeed,setInputSeed]=useState(2026),[boxes,setBoxes]=useState<Box[]>(()=>generateBoxes(20,2026));
@@ -105,7 +111,7 @@ export function App() {
       if(m.type==='allocationProgress')setAllocationProgress(m);
       if(m.type==='capacity')setMessage(m.message);
       if(m.type==='error'){setMessage(m.message);setState('오류');}
-      if(m.type==='generation') {setLiveBest(null);setAllocationProgress(null);const g=m.generation as Generation;setHistory(h=>[...h,g]);if(followRef.current)setSelected(g.individuals.reduce((a,b)=>a.score>=b.score?a:b));}
+      if(m.type==='generation'||m.type==='generations') {const incoming:Generation[]=m.type==='generation'?[m.generation]:m.generations;if(incoming.length){setLiveBest(null);setAllocationProgress(null);setHistory(h=>[...h,...incoming]);const g=incoming.at(-1)!;if(followRef.current)setSelected(g.individuals.reduce((a,b)=>a.score>=b.score?a:b));}}
       if(m.type==='reweighted') {setApplied({...m.weights});setLiveBest(m.individuals.length?Math.max(...m.individuals.map((p:Individual)=>p.score)):null);weightVersions.current[m.version]={...m.weights};setSelected(s=>s?m.individuals.find((p:Individual)=>p.id===s.id)??s:null);setMessage(`가중치 v${m.version} 적용 · 현재 집단 재평가 완료. 이어서 실행할 수 있습니다.`);}
     };
     w.onerror=e=>{setMessage(e.message||'계산 Worker를 실행할 수 없습니다.');setState('오류');};
@@ -118,11 +124,11 @@ export function App() {
       if(sequential&&priorityStale)throw Error('수량·seed를 변경했습니다. 상자를 다시 생성한 후 도착시키세요.');
       const input=sequential?activeBoxes:resolveBoxInput(normalized.value,inputSeed,initialInput.current!);
       if(!sequential)initialInput.current={count:normalized.value,seed:inputSeed,boxes:input};
-      validateConfig(input,truck,settings,weights);
+      validateWebConfig(input,truck,settings,weights);
       if(!automatic&&Object.keys(fixed).length===activeBoxes.length&&sequential)throw Error('모든 도착 상자가 적재되었습니다. 다음 상자를 도착시키세요.');
       const {w,id}=createWorker();setLiveBest(null);setSnapshot(null);weightVersions.current={1:{...weights}};setHistory([]);setSelected(null);setAllocationProgress({generation:1,boxes:input.length,population:settings.population,ready:0,mostLoaded:0,attempts:0});setStep(0);setPlaying(false);setMessage('');setFollow(true);setApplied({...weights});setState('실행');
       if(!sequential){setBoxes(input);setSupplyRound(1);}
-      w.postMessage({type:'start',run:id,boxes:input,truck,settings,weights,fixed:automatic?{}:fixed,arrival:sequential,automatic,inputSeed,requireFullAllocation:true,priorityUnloading:true} satisfies Command);
+      w.postMessage({type:'start',run:id,boxes:input,truck,settings,weights,fixed:automatic?{}:fixed,arrival:sequential,automatic,inputSeed,requireFullAllocation:true,priorityUnloading:true,batchGenerations:true} satisfies Command);
     }catch(e){setMessage((e as Error).message);}
   }
   /** 완료 시점의 결과·카메라·재생 단계를 확정하고 늦은 Worker 응답을 차단한다. */
@@ -149,7 +155,7 @@ export function App() {
   /** 가중치만 현재 집단에 적용하고 세대별 당시 점수는 보존한다. */
   function apply() {
     if(snapshot){setMessage('완료 결과는 확정되어 있습니다. 새 실행에서 가중치를 변경하세요.');return;}
-    try {validateConfig(activeBoxes.length?activeBoxes:boxes,truck,settings,weights);if(worker.current){worker.current.postMessage({type:'weights',run:run.current,weights} satisfies Command);setMessage('현재 계산에 가중치를 적용하는 중입니다.');}else {setApplied({...weights});setMessage('다음 실행의 기본 평가에 반영했습니다.');}}
+    try {validateWebConfig(activeBoxes.length?activeBoxes:boxes,truck,settings,weights);if(worker.current){worker.current.postMessage({type:'weights',run:run.current,weights} satisfies Command);setMessage('현재 계산에 가중치를 적용하는 중입니다.');}else {setApplied({...weights});setMessage('다음 실행의 기본 평가에 반영했습니다.');}}
     catch(e){setMessage((e as Error).message);}
   }
   /** 순차 도착을 한 건 진행한다. 진행 중 실행은 변경하지 않는다. */
@@ -159,7 +165,7 @@ export function App() {
   /** 계획서의 3개 seed와 9개 조건을 별도 Worker에서 비교한다. */
   function experiment() {
     try {
-      const n=normalizeBoxCount(count);setCount(n.value);if(n.warning)setCountWarning(n.warning);const input=resolveBoxInput(n.value,inputSeed,initialInput.current!);validateConfig(input,truck,settings,weights);setBoxes(input);initialInput.current={count:n.value,seed:inputSeed,boxes:input};if(settings.population<5)throw Error('k=5 실험을 위해 집단 수를 5 이상으로 설정하세요.');
+      const n=normalizeBoxCount(count);setCount(n.value);if(n.warning)setCountWarning(n.warning);const input=resolveBoxInput(n.value,inputSeed,initialInput.current!);validateWebConfig(input,truck,settings,weights);setBoxes(input);initialInput.current={count:n.value,seed:inputSeed,boxes:input};
       experimentWorker.current?.terminate();const w=new Worker(new URL('../workers/evolution.ts',import.meta.url),{type:'module'});experimentWorker.current=w;
       setResults([]);setExperimentState('실험 준비 중');const snapshot={boxes:input,truck,settings,weights,objective:'priority-unload'};
       w.onmessage=e=>{const m=e.data;if(m.type==='experimentProgress')setExperimentState(m.progress);if(m.type==='experiments'){setResults(m.result);setExperimentState('실험 완료');w.terminate();}if(m.type==='error'){setExperimentState('실험 오류: '+m.message);w.terminate();}};
@@ -187,12 +193,12 @@ export function App() {
           <div className="replay"><div className="replay-mode" role="group" aria-label="재생 모드"><button aria-pressed={replayMode==='unloading'} onClick={()=>setReplayMode('unloading')}>우선도 하차</button><button aria-pressed={replayMode==='loading'} onClick={()=>setReplayMode('loading')}>상차 확인</button></div><div className="replay-controls"><button disabled={!selected} onClick={()=>{setFollow(false);setPlaying(p=>!p);if(step===events.length)setStep(0);}}>{playing?'Ⅱ 재생 정지':`▷ ${replayMode==='unloading'?'하차':'상차'} 재생`}</button><input aria-label="배치 재생 단계" type="range" min="0" max={events.length} value={Math.min(step,events.length)} onChange={e=>{setPlaying(false);setStep(+e.target.value);}} disabled={!selected}/><span>{step}/{events.length}</span></div><p>{currentEvent?`#${currentEvent.boxId} · 우선도 ${viewBoxes.find(b=>b.id===currentEvent.boxId)?.priority} · ${currentEvent.kind==='deliver'?'배송 하차':currentEvent.kind==='load'?'최초 상차':currentEvent.kind==='out'?'방해 상자 임시 이동':'임시 이동 상자 복귀'} · 누적 ${currentEvent.moves}회 / ${number(currentEvent.mass)}kg`:replayMode==='unloading'?'적재 완료 상태에서 시작 · 높은 우선도부터 하차 · 최초 배송 하차는 재이동 제외':'빈 적재함에서 시작 · 최초 상차는 재이동 제외'}</p></div>
 
         </section>
-        <section className="panel weights-panel"><div className="panel-heading"><div><span className="section-index">02</span><h2>평가 가중치</h2></div><span className="tag green-tag">우선도 하차 평가</span></div><p className="panel-description">적재·공간 집중도 보상에서 우선순 하차의 재이동 횟수·중량을 감점합니다. 점수는 음수일 수 있습니다.</p><div className="weight-fields"><Field disabled={!!snapshot} label="적재량 보상" value={weights.base} onChange={v=>setWeights(w=>({...w,base:v}))}/><Field disabled={!!snapshot} label="하차 재이동 1회 감점" value={weights.moves} min={0} onChange={v=>setWeights(w=>({...w,moves:v}))}/><Field disabled={!!snapshot} label="공간 집중도 보상" value={weights.space??20} min={0} onChange={v=>setWeights(w=>({...w,space:v}))}/><Field disabled={!!snapshot} label="하차 재이동 1kg 감점" value={weights.mass} min={0} step={.1} onChange={v=>setWeights(w=>({...w,mass:v}))}/></div><div className="formula">{applied.base} × 적재율 + {applied.space??20} × 공간집중도 − {applied.moves} × 하차재이동횟수 − {applied.mass} × 하차재이동kg</div><div className="weight-footer"><button onClick={()=>setBoxList(b=>!b)}>상자별 우선도 설정</button><span>적재율 = (개수 비율 + 부피 비율) ÷ 2</span><button className="apply" onClick={apply}>가중치 적용 ↗</button></div></section>
-        <section className="panel input-panel"><details><summary><span className="section-index">03</span> 입력과 탐색 설정 <span>펼치기 ＋</span></summary><div className="details-content"><h3>택배 입력</h3><label className="checkbox"><input type="checkbox" checked={automatic} disabled={locked} onChange={e=>{setAutomatic(e.target.checked);if(e.target.checked){setSequential(false);setArrival(null);}}}/>상자 자동 공급 · 누적 최대 400개</label><p className="help">탐색이 끝나도 다음 상자를 자동 생성합니다. 상자 할당 개수는 최초 입력과 다음 공급 묶음에 동일하게 적용합니다. 상자를 모두 적재하고 우선순 하차 평가까지 통과한 개체로 집단을 구성한 뒤 다음 세대로 진행합니다. 누적 최대 400개 또는 추가 상차 공간·경로가 없거나 정지할 때까지 진행합니다.</p><div className="fields"><Field label={automatic?"상자 할당 개수 (회당)":"실험용 고정 상자 수"} value={count} min={MIN_BOXES} max={MAX_BOXES} disabled={locked} onChange={v=>changeCount(v)} onBlur={()=>changeCount(count,true)}/><Field label="입력 seed" value={inputSeed} min={0} max={4294967295} disabled={locked} onChange={setInputSeed}/></div>{countWarning&&<p role="alert" className="input-warning">{countWarning}</p>}<p className="help">입력 범위 1~400개 · 누적 할당 {boxes.length}/400개 · 수량·seed 변경은 시작 시 실제 목록에 반영됩니다.</p><div className="grade-legend">{GRADES.map((g,i)=><span key={g.name}><i style={{background:['#d4aa74','#94bb9b','#c4ae82','#8babb0','#c28a65'][i]}}/>{g.name} {boxes.filter(b=>b.grade===i).length}</span>)}</div><p className="help">5등급 각 20% 추첨 · 최대 160cm / 20kg · 최장변 100cm</p><div className="inline"><button disabled={locked} onClick={()=>generate()}>상자 다시 생성</button><button onClick={()=>setBoxList(b=>!b)}>{boxList?'목록 닫기':'상자 목록'}</button></div>
+        <section className="panel weights-panel"><div className="panel-heading"><div><span className="section-index">02</span><h2>평가 가중치</h2></div><span className="tag green-tag">우선도 하차 평가</span></div><p className="panel-description">모든 가중치는 1~501입니다. 적재·공간 집중도 보상에서 우선순 하차의 재이동 횟수·중량을 감점합니다. 점수는 음수일 수 있습니다.</p><div className="weight-fields"><Field disabled={!!snapshot} label="적재량 보상" value={weights.base} min={R.weight.min} max={R.weight.max} step="any" onChange={v=>setWeights(w=>({...w,base:v}))}/><Field disabled={!!snapshot} label="하차 재이동 1회 감점" value={weights.moves} min={R.weight.min} max={R.weight.max} step="any" onChange={v=>setWeights(w=>({...w,moves:v}))}/><Field disabled={!!snapshot} label="공간 집중도 보상" value={weights.space??20} min={R.weight.min} max={R.weight.max} step="any" onChange={v=>setWeights(w=>({...w,space:v}))}/><Field disabled={!!snapshot} label="하차 재이동 1kg 감점" value={weights.mass} min={R.weight.min} max={R.weight.max} step="any" onChange={v=>setWeights(w=>({...w,mass:v}))}/></div><div className="formula">{applied.base} × 적재율 + {applied.space??20} × 공간집중도 − {applied.moves} × 하차재이동횟수 − {applied.mass} × 하차재이동kg</div><div className="weight-footer"><button onClick={()=>setBoxList(b=>!b)}>상자별 우선도 설정</button><span>적재율 = (개수 비율 + 부피 비율) ÷ 2</span><button className="apply" onClick={apply}>가중치 적용 ↗</button></div></section>
+        <section className="panel input-panel"><details><summary><span className="section-index">03</span> 입력과 탐색 설정 <span>펼치기 ＋</span></summary><div className="details-content"><h3>택배 입력</h3><label className="checkbox"><input type="checkbox" checked={automatic} disabled={locked} onChange={e=>{setAutomatic(e.target.checked);if(e.target.checked){setSequential(false);setArrival(null);}}}/>상자 자동 공급 · 누적 최대 400개</label><p className="help">탐색이 끝나도 다음 상자를 자동 생성합니다. 상자 할당 개수는 최초 입력과 다음 공급 묶음에 동일하게 적용합니다. 상자를 모두 적재하고 우선순 하차 평가까지 통과한 개체로 집단을 구성한 뒤 다음 세대로 진행합니다. 누적 최대 400개 또는 추가 상차 공간·경로가 없거나 정지할 때까지 진행합니다.</p><div className="fields"><Field label={automatic?"상자 할당 개수 (회당)":"실험용 고정 상자 수"} value={count} min={MIN_BOXES} max={MAX_BOXES} disabled={locked} onChange={v=>changeCount(v)} onBlur={()=>changeCount(count,true)}/><Field label="상자 생성 난수값 (입력 seed)" value={inputSeed} min={0} max={4294967295} disabled={locked} onChange={setInputSeed}/></div>{countWarning&&<p role="alert" className="input-warning">{countWarning}</p>}<p className="help">입력 범위 1~400개 · 누적 할당 {boxes.length}/400개 · 수량·seed 변경은 시작 시 실제 목록에 반영됩니다.</p><div className="grade-legend">{GRADES.map((g,i)=><span key={g.name}><i style={{background:['#d4aa74','#94bb9b','#c4ae82','#8babb0','#c28a65'][i]}}/>{g.name} {boxes.filter(b=>b.grade===i).length}</span>)}</div><p className="help">5등급 각 20% 추첨 · 최대 160cm / 20kg · 최장변 100cm</p><div className="inline"><button disabled={locked} onClick={()=>generate()}>상자 다시 생성</button><button onClick={()=>setBoxList(b=>!b)}>{boxList?'목록 닫기':'상자 목록'}</button></div>
           <label className="checkbox"><input type="checkbox" checked={sequential} disabled={locked||automatic} onChange={e=>{setSequential(e.target.checked);generate(e.target.checked);}}/>순차 도착 모드 · 대기 공간 40개</label>
           {sequential&&arrival&&<div className="arrival"><p>도착 {arrival.cursor}/{boxes.length} · 대기 {arrival.waiting.length}/40 · 적재 {arrival.loaded.length}</p><div className="inline"><button disabled={busy||state==='일시정지'} onClick={receive}>다음 상자 도착</button><button disabled={!selected||busy||state==='일시정지'||!arrival.waiting.length} onClick={commit}>선택 배치 상차</button></div><p className="help">도착 → GA 실행 → 정지/완료 → 배치 선택 → 상차 확정. 기존 적재 좌표는 고정됩니다.</p><ol className="arrival-log">{arrival.log.slice(-5).map((s,i)=><li key={i}>{s}</li>)}</ol></div>}
-          <h3>가상 적재함 내부 치수 (cm)</h3><p className="help">실험용 입력 치수이며 차량 실측값이 아닙니다. 출입구는 깊이 0 방향입니다.</p><div className="fields three">{(['width','depth','height'] as const).map((k,i)=><Field key={k} label={['폭','깊이','높이'][i]} value={truck[k]} min={10} max={2000} disabled={locked} onChange={v=>setTruck(t=>({...t,[k]:v}))}/>)}</div>
-          <h3>유전 알고리즘</h3><div className="fields"><Field label="집단 크기" value={settings.population} min={2} max={100} disabled={locked} onChange={v=>setSettings(s=>({...s,population:v}))}/><Field label={automatic?"공급 회차당 탐색 세대":"총 세대"} value={settings.generations} min={1} max={300} disabled={locked} onChange={v=>setSettings(s=>({...s,generations:v}))}/><Field label="교차율" value={settings.crossover} min={0} max={1} step={.05} disabled={locked} onChange={v=>setSettings(s=>({...s,crossover:v}))}/><Field label="상자별 변이율" value={settings.mutation} min={0} max={1} step={.01} disabled={locked} onChange={v=>setSettings(s=>({...s,mutation:v}))}/><Field label="토너먼트 k" value={settings.tournament} min={2} max={settings.population} disabled={locked} onChange={v=>setSettings(s=>({...s,tournament:v}))}/><Field label="GA seed" value={settings.seed} min={0} max={4294967295} disabled={locked} onChange={v=>setSettings(s=>({...s,seed:v}))}/></div><p className="help">엘리트 1개 보존 · 설정을 바꾸려면 실행을 초기화하세요.</p></div></details></section>
+          <p className="help">입력 seed는 상자 생성, GA seed는 진화 계산의 난수값입니다. 같은 난수값과 설정은 같은 결과를 재현합니다.</p><h3>가상 적재함 내부 치수 (cm)</h3><p className="help">실험용 입력 치수이며 차량 실측값이 아닙니다. 출입구는 깊이 0 방향입니다.</p><div className="fields three">{(['width','depth','height'] as const).map((k,i)=><Field key={k} label={['폭','깊이','높이'][i]} value={truck[k]} min={10} max={2000} disabled={locked} onChange={v=>setTruck(t=>({...t,[k]:v}))}/>)}</div>
+          <h3>유전 알고리즘</h3><p className="help">집단 0~101 · 세대 1~10,001 · 교차율 0.1~1.1 · 변이율 0.01~1 · k 1~6. 교차율 입력 {Number.isFinite(settings.crossover)?settings.crossover:'—'} → 실제 {Number.isFinite(settings.crossover)?Number((effectiveCrossover(settings.crossover)*100).toFixed(6)):'—'}%. 1 이상이면 항상 교차합니다.</p><div className="fields"><Field label="집단 크기" value={settings.population} min={R.population.min} max={R.population.max} disabled={locked} onChange={v=>setSettings(s=>({...s,population:v}))}/><Field label={automatic?"공급 회차당 탐색 세대":"총 세대"} value={settings.generations} min={R.generations.min} max={R.generations.max} disabled={locked} onChange={v=>setSettings(s=>({...s,generations:v}))}/><Field label="교차율" value={settings.crossover} min={R.crossover.min} max={R.crossover.max} step="any" disabled={locked} onChange={v=>setSettings(s=>({...s,crossover:v}))}/><Field label="상자별 변이율" value={settings.mutation} min={R.mutation.min} max={R.mutation.max} step="any" disabled={locked} onChange={v=>setSettings(s=>({...s,mutation:v}))}/><Field label="토너먼트 k" value={settings.tournament} min={R.tournament.min} max={R.tournament.max} disabled={locked} onChange={v=>setSettings(s=>({...s,tournament:v}))}/><Field label="진화 난수값 (GA seed)" value={settings.seed} min={0} max={4294967295} disabled={locked} onChange={v=>setSettings(s=>({...s,seed:v}))}/></div><p className="help">집단 0은 실행하지 않고 안내합니다. 토너먼트는 복원 추출이므로 집단보다 k가 커도 사용할 수 있습니다. 엘리트 1개 보존 · 설정 변경 전 초기화하세요.</p></div></details></section>
       </div>
       <section className="panel tree-panel"><div className="panel-heading"><div><span className="section-index">04</span><h2>세대별 진화 로드맵</h2></div><span className="tag">{latest?`${latest.number*settings.population} 개체`:'1세대부터 시작'}</span></div><div className="tree-intro"><p>아래에서 시작해, 더 나은 배치로 올라갑니다.</p><label className="checkbox"><input type="checkbox" checked={follow} onChange={e=>setFollow(e.target.checked)}/>최신 세대 따라가기</label></div><div className="tree-legend"><span><i className="legend-normal"/>배치 후보</span><span><i className="legend-best"/>세대 최고</span><span><i className="legend-selected"/>선택 개체</span><span className="tree-direction">진화 방향 ↑</span></div>
         <GenerationTree history={history} selected={selected?.id??''} onSelect={p=>{setSelected(p);setFollow(false);}} follow={follow} setFollow={setFollow}/>
@@ -369,6 +375,8 @@ createRoot(document.getElementById('root')!).render(<App/>);
 @media(max-width:600px){.scene-toolbar{gap:4px;flex-wrap:wrap}.scene-toolbar button{font-size:9px;padding:6px}.individual-stats b{font-size:16px}}
 
 .input-warning{color:#9a4319;background:#fff4df;border:1px solid #e7bb74;border-radius:8px;padding:10px 12px;font-size:13px;}
+
+.field-warning{color:#97521d;font-size:12px;line-height:1.5;}
 ```
 
 
@@ -391,3 +399,22 @@ createRoot(document.getElementById('root')!).render(<App/>);
 공개 배포: gh-pages5a26e2605da61d619af417fcfd990f2dc928d5b7, Pages Actions43913323612 success. UI index-DBxvyf4a.js, Worker evolution-BRu2GaIS.js. 공개 브라우저에서도1000→400 경고·보정과 에셋 표시를 확인했다. 콘솔 오류/경고0. 실제 화면 증거 docs/images/input-limit-warning.jpg 및 docs/images/input-400.jpg. 로컬 임시 테스트 로그는 artifacts/input-limit에 보관(공개 대상 제외).
 
 상세 계획·승인·환경·함수 및 검사 기록: `Info/plan/2026-11-17/015406_입력반영과누적400제한_plan.md`. 위 전체 코드는 현재 구현이다.
+
+
+## 2026-11-17 03:34:49 KST 최종 설정 범위·전구간검증
+
+최종사용자범위는가중치전체1~501/집단0~101/세대1~10001/교차.1~1.1/변이.01~1/k1~6. 집단0은실행안내만,1부터실행한다. 교차입력1.1을보관하되실제확률은1이상100%이며화면·다운로드에입력과실제값을구별한다. 짐칸기본220×520×220과상자누적1~400은유지한다. 실패감점추가없음.
+
+model.CONFIG_RANGES를UI속성·Worker웹검증·11단계검사의단일범위정의로사용한다. normalizeNumber는빈값/무한대/범위밖/정수항목을편집완료에보정하며범위안의소수는그대로보존한다. Field는별도보정안내와안정적인aria-label을사용한다. 집단0안내는Worker생성이전에발생하며Worker도우회명령을재검증한다. 난수값은상자생성과진화계산의재현용임을화면에설명했다. k는복원추출로집단보다클수있다. 일반독립API는과거0가중치/0교차·변이실험을호환하되웹은validateWebConfig로새최소/최대범위를적용한다. 웹비교실험의0교차/0변이조건은.1/.01로바꾸고독립구상차비교조건은유지한다.
+
+범위검사에서상자100/집단101/변이1의2세대가90초내완료되지않아우선순하차offspring도구획·지지면복구경로를사용하도록수정했다. 개별위치전수탐색대신좌표변이후물리복구를수행하며전체상차·하차평가는그대로다. 구상차API는기존분기로유지해35/48전체세대해시를보존했다. 최종전체검사에서이조합은약26.1초에2세대완료했다.
+
+10001세대의세대당setTimeout예약과메시지/화면갱신대기가누적되어전체병렬검사에서는90초에8658세대까지만끝난사례가있었다. tick의12ms예산안에서작은완료세대여러개를계산하고웹명령의batchGenerations=true일때완성된세대를배열로전달한다. App은배열을한번에history에추가하고마지막선택을갱신한다. 세대를생략하지않으며공급/완료/오류알림전에묶음을flush한다. 기존단일메시지명령도호환하고정지/일시정지의동기테스트콜백도존중한다. 작은집단1의10001세대는최종Worker검사48ms,묶음10001세대는2메시지로확인했다. 이는작은입력의측정이며일반속도배수로주장하지않는다.
+
+검사:90개통과/실패0,전체약61.4초. 항목별11단계99조건중0집단안내1건과실제완주98건,총55,272세대/588재생전이검사. 실제재이동2회/6kg의고정배치검사로비용가중치도계산에연결됐음을검사했다. 전체값·상태·수치는 `Info/report/2026-11-17/2026-11-17_033449_설정범위11단계검사_report.md`. 재현명령npm run range-test,새패키지없음. 타입검사/production빌드성공,기존큰번들경고유지.
+
+로컬3상자/집단2/10001세대·최대교차/변이/가중치/k의완주·개체선택·하차재생·확정,6상자/집단101/3세대상차·하차재생을확인했다. 공개100상자/집단101/2세대최대설정완료/재생도확인했다. 최종실행이후콘솔오류0. UI수치영역넘침없음. 실제증거docs/images/ranges-10001-complete.jpg,ranges-max-settings.jpg,ranges-public-max.jpg. 이전실행의반복갱신경고로그는최종실행시각으로구별했다.
+
+배포: gh-pages85e42214ccd315e46749eb64ea4f5691eb7dad31,Pages43929516607 success,UI index-CmmI9d1A.js/Worker evolution-BxiEfROi.js. 기존Public전체프로젝트승인으로소스·문서push예정. 남은확인범위내문제없음. 모든seed/실수값/최대입력전체직교곱의성공·일정시간을보장하지않는다.
+
+상세목표·승인·환경·작동및검증은 `Info/plan/2026-11-17/031259_설정범위와10퍼센트단계검증_plan.md`. 위전체소스는현재코드다.

@@ -1,3 +1,4 @@
+import {effectiveCrossover} from '../domain/ranges';
 import {priorityOrder,priorityColor} from '../domain/priority';
 import type {Generation,Individual,Settings,Truck,Weights,MoveEvent,Box,Vec} from '../domain/model';
 
@@ -30,7 +31,7 @@ function metadata(s:ResultSnapshot,gs:Generation[]):string[] {
  const seedLines:string[]=[];for(let i=0;i<seeds.length;i+=6)seedLines.push('범위 내 회차별 GA seed | '+seeds.slice(i,i+6).join(' · '));
  return [...(priorityResult(s)?['목적: 우선도 순 하차 재이동 최소화 | 5 먼저 → 1 나중 | 동점: ID 오름차순']:[]),`완료 ${date(s)} | 세대 ${gs[0]?.number??0}–${gs.at(-1)?.number??0} | 공급 회차 ${[...new Set(gs.map(g=>g.round??1))].join(', ')}`,
  `짐칸 ${s.truck.width}×${s.truck.depth}×${s.truck.height} cm | 회당 할당 ${s.batchCount}개 | ${s.automatic?'자동 공급':'고정 입력'} | 입력 seed ${s.inputSeed}`,
- `집단 ${s.settings.population} | 교차 ${s.settings.crossover} | 변이 ${s.settings.mutation} | k=${s.settings.tournament} | 최초 GA seed ${s.settings.seed} | 회차당 ${s.settings.generations}세대`,
+ `집단 ${s.settings.population} | 교차 입력 ${s.settings.crossover} (실제 ${effectiveCrossover(s.settings.crossover)*100}%) | 변이 ${s.settings.mutation} | k=${s.settings.tournament} | 최초 GA seed ${s.settings.seed} | 회차당 ${s.settings.generations}세대`,
  ...seedLines,...versions.map(v=>{const w=s.weights[v];return w?`가중치 v${v}: ${w.base}×적재율 + ${w.space??20}×공간집중도 − ${w.moves}×${costLabel}횟수 − ${w.mass}×${costLabel}kg`:`가중치 v${v}: 기록 없음 (추정하지 않음)`;})];
 }
 function frame(s:ResultSnapshot,gs:Generation[],title:string,width:number,bodyHeight:number,body:(top:number)=>string,notes:string[]=[]):Graphic {

@@ -138,3 +138,8 @@ Packing/EvolutionView/Evolution/Arrival 기존 ID 사용. 최신 입력 범위1~
 ## 2026-11-17 02:27:16 KST 기본짐칸 전량 후보 복구
 
 기존Packing/Evolution ID 재사용. SW_Browser_Packing_Bug_001 해결. 최대 지지면·상차 순서 복구,82개 검사/빌드·로컬기본짐칸256/400 확인. 실패 감점 미구현(사용자철회). `Info/plan/2026-11-17/021302_기본짐칸전량후보생성수정_plan.md` 참조.
+
+
+## 2026-11-17 03:34:49 KST 설정 범위와11단계 검증
+
+Packing/Evolution/EvolutionView/ResultExport기존ID재사용. 최종공통범위와0집단안내·1.1교차실효100%,변이전수탐색/장기세대대기수정.90개검사/99조건/10001완주·재생확인. `Info/plan/2026-11-17/031259_설정범위와10퍼센트단계검증_plan.md`, `Info/report/2026-11-17/2026-11-17_033449_설정범위11단계검사_report.md`.

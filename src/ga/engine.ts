@@ -1,3 +1,4 @@
+import {effectiveCrossover} from '../domain/ranges';
 import {supportSurfacePack,dependencyLoadingOrder} from '../domain/supportPacking';
 import {priorityOrder} from '../domain/priority';
 import {simulateSteps} from '../simulation/unload';
@@ -27,13 +28,14 @@ export class Engine {
   }
   /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
   offspring(): {coords:Vec[];loadOrder:number[];repairOrder?:number[];parents:string[];operation:string;repaired:boolean}|null {
-    const a=this.select(),b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
+    const useRepair=this.partitionMode||this.priorityUnloading;
+    const a=this.select(),b=this.select();const cross=this.rng.next()<effectiveCrossover(this.settings.crossover) && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
       if(this.fixed[this.boxes[i].id] || this.rng.next()>=this.settings.mutation)continue;
-      // 구획 복구 모드에서는 좌표 유전자를 변이한 뒤 공통 복구기로 충돌·지지를 보장한다.
-      if(this.partitionMode){const size=this.boxes[i].size;coords[i]=[this.rng.int(0,this.truck.width-size[0]),this.rng.int(0,this.truck.depth-size[1]),this.rng.int(0,this.truck.height-size[2])];mutated=true;continue;}
+      // 우선도 하차 또는 구획 복구에서는 변이율1도 전수 위치 탐색 대신 공통 복구기로 충돌·지지를 검사한다.
+      if(useRepair){const size=this.boxes[i].size;coords[i]=[this.rng.int(0,this.truck.width-size[0]),this.rng.int(0,this.truck.depth-size[1]),this.rng.int(0,this.truck.height-size[2])];mutated=true;continue;}
       // 위 지지 관계까지 고정하는 대신 변이 후 pack에서 후속 검사를 수행한다.
       const placed=this.boxes.flatMap((box,j)=>j===i||coords[j][0]<0?[]:[{box,pos:coords[j]}]);
       const p=randomPosition(this.boxes[i],placed,this.truck,this.rng);
@@ -48,9 +50,9 @@ export class Engine {
     const loadOrder=cross?[...prefix,...b.loadOrder.filter(id=>!prefix.includes(id))]:[...a.loadOrder];
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
     // 유효한 복제·교차 좌표는 그대로 보존한다. 복구가 필요한 자식만 다시 구획화한다.
-    const result=this.partitionMode?(validateLayout(this.boxes,coords,this.truck)?this.rescuePack(coords):{coords,repaired:false,loadOrder:this.boxes.map((b,i)=>({id:b.id,back:coords[i][1]+b.size[1],z:coords[i][2]})).sort((a,b)=>b.back-a.back||a.z-b.z).map(b=>b.id)}):pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
+    const result=useRepair?(validateLayout(this.boxes,coords,this.truck)?this.rescuePack(coords):{coords,repaired:false,loadOrder:this.boxes.map((b,i)=>({id:b.id,back:coords[i][1]+b.size[1],z:coords[i][2]})).sort((a,b)=>b.back-a.back||a.z-b.z).map(b=>b.id)}):pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
     if(!result)return null;
-    return {...result,loadOrder,...(this.partitionMode?{repairOrder:result.loadOrder}:{}),parents:cross?[a.id,b.id]:[a.id],operation:(cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제'))+(this.partitionMode&&result.repaired?'·구획 복구':'')};
+    return {...result,loadOrder,...(useRepair?{repairOrder:result.loadOrder}:{}),parents:cross?[a.id,b.id]:[a.id],operation:(cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제'))+(useRepair&&result.repaired?'·구획 복구':'')};
   }
   /** 기존 구획 후보가 부분 배치이면 최대 지지면 전략으로 복구한다. 성공 경로의 난수·후보는 보존한다. */
   private rescuePack(preferred?:Vec[]):ReturnType<typeof partitionPack> {

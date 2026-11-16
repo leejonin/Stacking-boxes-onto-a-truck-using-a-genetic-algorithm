@@ -26,3 +26,5 @@
 @media(max-width:600px){.scene-toolbar{gap:4px;flex-wrap:wrap}.scene-toolbar button{font-size:9px;padding:6px}.individual-stats b{font-size:16px}}
 
 .input-warning{color:#9a4319;background:#fff4df;border:1px solid #e7bb74;border-radius:8px;padding:10px 12px;font-size:13px;}
+
+.field-warning{color:#97521d;font-size:12px;line-height:1.5;}

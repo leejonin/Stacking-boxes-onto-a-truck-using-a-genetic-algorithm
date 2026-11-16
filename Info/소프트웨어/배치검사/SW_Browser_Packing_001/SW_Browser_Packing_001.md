@@ -60,6 +60,10 @@ export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:2
 export const DEFAULT_SETTINGS: Settings = { population: 50, generations: 100, crossover: .9, mutation: .05, tournament: 3, seed: 2026 };
 export const DEFAULT_TRUCK: Truck = { width: 220, depth: 520, height: 220 };
 
+export interface NumericRange {min:number;max:number;integer?:boolean}
+/** 화면·Worker·단계 검사에서 공유하는 현재 허용 범위. */
+export const CONFIG_RANGES={weight:{min:1,max:501},population:{min:0,max:101,integer:true},generations:{min:1,max:10001,integer:true},crossover:{min:.1,max:1.1},mutation:{min:.01,max:1},tournament:{min:1,max:6,integer:true}} satisfies Record<string,NumericRange>;
+
 /** 한 실행의 최초 입력·자동 공급을 합친 상자 범위. */
 export const MIN_BOXES=1,MAX_BOXES=400;
 /** 입력 편집 후 확정할 정수 개수와 사용자 경고를 반환한다. */
@@ -108,7 +112,7 @@ export function validateConfig(boxes: Box[], truck: Truck, settings: Settings, w
   if (!boxes.length || new Set(boxes.map(b=>b.id)).size !== boxes.length) throw Error('상자 목록이 비어 있거나 ID가 중복됩니다.');
   if ([truck.width,truck.depth,truck.height].some(n=>!Number.isInteger(n)||n<10||n>2000)) throw Error('적재함 치수는 10~2000cm 정수여야 합니다.');
   if (boxes.some(b=>gradeOf(b.size,b.weight)<0 || !Number.isFinite(b.priority) || b.priority<1 || b.priority>5)) throw Error('상자 규격 또는 우선도가 올바르지 않습니다.');
-  if (!Number.isInteger(settings.population)||settings.population<2||settings.population>100 || !Number.isInteger(settings.generations)||settings.generations<1||settings.generations>300 || !Number.isInteger(settings.tournament)||settings.tournament<2||settings.tournament>settings.population || [settings.crossover,settings.mutation].some(n=>!Number.isFinite(n)||n<0||n>1) || !Number.isInteger(settings.seed) || settings.seed<0 || settings.seed>4294967295) throw Error('집단 2~100, 세대 1~300, k 2~집단 수, 교차·변이율 0~1, seed 범위를 확인하세요.');
+  if (!Number.isInteger(settings.population)||settings.population<1||settings.population>CONFIG_RANGES.population.max || !Number.isInteger(settings.generations)||settings.generations<1||settings.generations>CONFIG_RANGES.generations.max || !Number.isInteger(settings.tournament)||settings.tournament<CONFIG_RANGES.tournament.min||settings.tournament>CONFIG_RANGES.tournament.max || (!Number.isFinite(settings.crossover)||settings.crossover<0||settings.crossover>CONFIG_RANGES.crossover.max)||(!Number.isFinite(settings.mutation)||settings.mutation<0||settings.mutation>1) || !Number.isInteger(settings.seed) || settings.seed<0 || settings.seed>4294967295) throw Error('실행 집단 1~101, 세대 1~10001, k 1~6, 교차율 0~1.1, 변이율 0~1, 난수값 범위를 확인하세요.');
   if (Object.values(weights).some(n=>!Number.isFinite(n))||weights.base<0||weights.moves<0||weights.mass<0||(weights.space??0)<0) throw Error('가중치는 유한한 0 이상의 숫자여야 합니다.');
 }
 ```
@@ -462,3 +466,47 @@ Engine.rescuePack은 기존 후보와 새 후보의 배치 개수를 비교해 �
 한계: 이 수정은 일반3D포장 최적해/모든 seed 입력의 성공을 보장하지 않는다. 물리적으로 불가능하거나 유한 탐색에서 전량 집단을 못 찾으면 세대를 올리지 않는다. 실패 후보를 점수 감점으로 받아들이거나 상자 크기를 줄이거나 겹침을 허용하지 않는다. 별도 실패 감점 요청은 철회되어 관련 상태·점수·입력 필드를 추가하지 않았다.
 
 승인/목표/환경·작동/검증·한계는 `Info/plan/2026-11-17/021302_기본짐칸전량후보생성수정_plan.md`. 위 전체 소스는 현재 코드다.
+
+
+### `src/domain/ranges.ts`
+
+```tsx
+import {validateConfig,type Box,type Truck,type Settings,type Weights} from './model';
+import {CONFIG_RANGES,type NumericRange} from './model';
+export {CONFIG_RANGES,type NumericRange} from './model';
+/** 빈값·무한대·범위 밖 값은 편집 완료 시 보정한다. 유효한 소수는 그대로 보존한다. */
+export function normalizeNumber(value:number,range:NumericRange):number {
+ const finite=Number.isNaN(value)?range.min:value,rounded=range.integer?Math.round(finite):finite;
+ return Math.max(range.min,Math.min(range.max,rounded));
+}
+/** 입력은1.1까지 보관하되 실제 교차 확률은 최대100%다. */
+export function effectiveCrossover(value:number):number {return Math.max(0,Math.min(1,value));}
+/** 범위 양끝을 포함한11단계. 정수 항목은 반올림하며 중복 단계도 검사 기록에 남긴다. */
+export function rangeSteps(range:NumericRange):number[]{return Array.from({length:11},(_,i)=>{const value=range.min+(range.max-range.min)*i/10;return range.integer?Math.round(value):Number(value.toFixed(8));});}
+/** 웹 실행의 범위를 Worker에서도 재검증한다. 기존 독립 상차 API의0가중치 실험은 별도로 유지한다. */
+export function validateWebConfig(boxes:Box[],truck:Truck,settings:Settings,weights:Weights):void {
+ if(settings.population===0)throw Error('집단을 1 이상 지정하세요. 집단 0에서는 실행하지 않습니다.');
+ validateConfig(boxes,truck,settings,weights);
+ if(settings.crossover<CONFIG_RANGES.crossover.min||settings.mutation<CONFIG_RANGES.mutation.min)throw Error('교차율은 0.1~1.1, 상자별 변이율은 0.01~1이어야 합니다.');
+ if([weights.base,weights.moves,weights.mass,weights.space??20].some(v=>!Number.isFinite(v)||v<1||v>501))throw Error('평가 가중치는 모두 1~501 범위여야 합니다.');
+}
+```
+
+
+## 2026-11-17 03:34:49 KST 최종 설정 범위·전구간검증
+
+최종사용자범위는가중치전체1~501/집단0~101/세대1~10001/교차.1~1.1/변이.01~1/k1~6. 집단0은실행안내만,1부터실행한다. 교차입력1.1을보관하되실제확률은1이상100%이며화면·다운로드에입력과실제값을구별한다. 짐칸기본220×520×220과상자누적1~400은유지한다. 실패감점추가없음.
+
+model.CONFIG_RANGES를UI속성·Worker웹검증·11단계검사의단일범위정의로사용한다. normalizeNumber는빈값/무한대/범위밖/정수항목을편집완료에보정하며범위안의소수는그대로보존한다. Field는별도보정안내와안정적인aria-label을사용한다. 집단0안내는Worker생성이전에발생하며Worker도우회명령을재검증한다. 난수값은상자생성과진화계산의재현용임을화면에설명했다. k는복원추출로집단보다클수있다. 일반독립API는과거0가중치/0교차·변이실험을호환하되웹은validateWebConfig로새최소/최대범위를적용한다. 웹비교실험의0교차/0변이조건은.1/.01로바꾸고독립구상차비교조건은유지한다.
+
+범위검사에서상자100/집단101/변이1의2세대가90초내완료되지않아우선순하차offspring도구획·지지면복구경로를사용하도록수정했다. 개별위치전수탐색대신좌표변이후물리복구를수행하며전체상차·하차평가는그대로다. 구상차API는기존분기로유지해35/48전체세대해시를보존했다. 최종전체검사에서이조합은약26.1초에2세대완료했다.
+
+10001세대의세대당setTimeout예약과메시지/화면갱신대기가누적되어전체병렬검사에서는90초에8658세대까지만끝난사례가있었다. tick의12ms예산안에서작은완료세대여러개를계산하고웹명령의batchGenerations=true일때완성된세대를배열로전달한다. App은배열을한번에history에추가하고마지막선택을갱신한다. 세대를생략하지않으며공급/완료/오류알림전에묶음을flush한다. 기존단일메시지명령도호환하고정지/일시정지의동기테스트콜백도존중한다. 작은집단1의10001세대는최종Worker검사48ms,묶음10001세대는2메시지로확인했다. 이는작은입력의측정이며일반속도배수로주장하지않는다.
+
+검사:90개통과/실패0,전체약61.4초. 항목별11단계99조건중0집단안내1건과실제완주98건,총55,272세대/588재생전이검사. 실제재이동2회/6kg의고정배치검사로비용가중치도계산에연결됐음을검사했다. 전체값·상태·수치는 `Info/report/2026-11-17/2026-11-17_033449_설정범위11단계검사_report.md`. 재현명령npm run range-test,새패키지없음. 타입검사/production빌드성공,기존큰번들경고유지.
+
+로컬3상자/집단2/10001세대·최대교차/변이/가중치/k의완주·개체선택·하차재생·확정,6상자/집단101/3세대상차·하차재생을확인했다. 공개100상자/집단101/2세대최대설정완료/재생도확인했다. 최종실행이후콘솔오류0. UI수치영역넘침없음. 실제증거docs/images/ranges-10001-complete.jpg,ranges-max-settings.jpg,ranges-public-max.jpg. 이전실행의반복갱신경고로그는최종실행시각으로구별했다.
+
+배포: gh-pages85e42214ccd315e46749eb64ea4f5691eb7dad31,Pages43929516607 success,UI index-CmmI9d1A.js/Worker evolution-BxiEfROi.js. 기존Public전체프로젝트승인으로소스·문서push예정. 남은확인범위내문제없음. 모든seed/실수값/최대입력전체직교곱의성공·일정시간을보장하지않는다.
+
+상세목표·승인·환경·작동및검증은 `Info/plan/2026-11-17/031259_설정범위와10퍼센트단계검증_plan.md`. 위전체소스는현재코드다.

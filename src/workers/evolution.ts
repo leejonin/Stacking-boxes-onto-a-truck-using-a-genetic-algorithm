@@ -1,12 +1,14 @@
+import {validateWebConfig} from '../domain/ranges';
 /// <reference lib="webworker" />
 import { Engine } from '../ga/engine';
 import {MAX_BOXES} from '../domain/model';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
 import {AutomaticSupply} from '../simulation/supply';
-export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number;requireFullAllocation?:boolean;priorityUnloading?:boolean}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;priorityUnloading?:boolean};
+export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number;requireFullAllocation?:boolean;priorityUnloading?:boolean;batchGenerations?:boolean}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;priorityUnloading?:boolean};
 let engine:Engine|null=null,run=0,paused=false,stopped=false,iterator:Generator<void,Generation,void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
 let lastProgressAt=0;
+let batchGenerations=false;
 let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
 /** 공급 회차마다 다른 입력·ID를 구별해 과거 개체와 계보를 보존한다. */
 function displayIndividuals(individuals:import('../domain/model').Individual[]) {
@@ -18,6 +20,9 @@ function send(type:string,data:object={}) {postMessage({type,run,...data});}
 /** 짧은 묶음으로 GA를 진행하고 완성된 세대만 보낸다. */
 function tick() {
   timer=undefined;if(!engine||paused||stopped)return;
+  const completed:Generation[]=[];
+  /** 완성 세대를 빠짐없이 묶어 보내고 공급·완료 알림 전에 확정한다. */
+  const flush=()=>{if(completed.length){send('generations',{generations:completed.splice(0)});}};
   try {
     if(!iterator)iterator=engine.next();
     const until=performance.now()+12;
@@ -25,27 +30,32 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1,weights:{...engine.weights},settings:{...engine.settings}}});
+        const generation={...g,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1,weights:{...engine.weights},settings:{...engine.settings}};
+        if(batchGenerations)completed.push(generation);else send('generation',{generation});
+        if(stopped||paused){flush();return;}
         if(engine.generation>=engine.settings.generations) {
           if(supply){
             const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),expanded=supply.expand(best,engine.truck);
             if(expanded){
+              flush();
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
               next.requireFullAllocation=engine.requireFullAllocation;next.priorityUnloading=engine.priorityUnloading;
               next.seedLayout=expanded.map((_,i)=>best.evaluation.finalCoords[i]??[-1,-1,-1]);next.version=engine.version;engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:engine.boxes.length>=MAX_BOXES?'누적 상자 한도 400개에 도달했습니다.':'현재 배치에서 최소 규격 상자를 넣을 추가 공간·상차 경로를 찾지 못했습니다.'});
+            flush();send('capacity',{message:engine.boxes.length>=MAX_BOXES?'누적 상자 한도 400개에 도달했습니다.':'현재 배치에서 최소 규격 상자를 넣을 추가 공간·상차 경로를 찾지 못했습니다.'});
           }
-          paused=true;send('state',{state:'완료'});return;
+          flush();paused=true;send('state',{state:'완료'});return;
         }
-        break;
+        if(performance.now()>=until)break;
+        iterator=engine.next();
       }
     } while(performance.now()<until);
+    flush();
     if(engine.requireFullAllocation&&iterator&&performance.now()-lastProgressAt>250){lastProgressAt=performance.now();send('allocationProgress',{generation:engine.generation+1+generationOffset,boxes:engine.boxes.length,population:engine.settings.population,...engine.allocationProgress});}
     timer=setTimeout(tick,0);
-  } catch(e) {stopped=true;send('error',{message:e instanceof Error?e.message:String(e)});}
+  } catch(e) {flush();stopped=true;send('error',{message:e instanceof Error?e.message:String(e)});}
 }
 /** 예약된 반복이 중복되지 않게 실행한다. */
 function schedule() {if(timer===undefined)timer=setTimeout(tick,0);}
@@ -53,11 +63,12 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
   const c=event.data;
   try {
     if(c.type==='start') {
-      if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
-      engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);engine.requireFullAllocation=!!c.requireFullAllocation;engine.priorityUnloading=!!c.priorityUnloading;lastProgressAt=0;iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
+      if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;engine=null;iterator=null;stopped=true;
+      if(c.priorityUnloading)validateWebConfig(c.boxes,c.truck,c.settings,c.weights);
+      engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);engine.requireFullAllocation=!!c.requireFullAllocation;engine.priorityUnloading=!!c.priorityUnloading;batchGenerations=!!c.batchGenerations;lastProgressAt=0;iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
       supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
-      run=c.run;stopped=false;
+      run=c.run;stopped=false;if(c.priorityUnloading)validateWebConfig(c.boxes,c.truck,c.settings,c.weights);
       const result=await runExperiments(c.boxes,c.truck,c.settings,c.weights,()=>stopped,(progress)=>send('experimentProgress',{progress}),!!c.priorityUnloading);
       if(!stopped)send('experiments',{result});
     } else if(c.run===run) {
@@ -65,6 +76,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
       if(c.type==='stop') {stopped=true;iterator=null;send('state',{state:'정지'});}
       if(c.type==='resume'&&engine&&!stopped&&engine.generation<engine.settings.generations) {paused=false;send('state',{state:'실행'});schedule();}
       if(c.type==='weights'&&engine) {
+        if(engine.priorityUnloading)validateWebConfig(engine.boxes,engine.truck,engine.settings,c.weights);
         paused=true;
         // 부분 세대의 혼합 점수를 방지한다. 미완성 세대만 버리고 기존 집단·난수는 유지한다.
         iterator=null;const individuals=engine.reweight(c.weights);send('reweighted',{individuals:displayIndividuals(individuals),version:engine.version,weights:{...engine.weights}});send('state',{state:'일시정지'});

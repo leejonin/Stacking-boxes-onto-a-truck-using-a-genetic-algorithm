@@ -14,6 +14,10 @@ export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:2
 export const DEFAULT_SETTINGS: Settings = { population: 50, generations: 100, crossover: .9, mutation: .05, tournament: 3, seed: 2026 };
 export const DEFAULT_TRUCK: Truck = { width: 220, depth: 520, height: 220 };
 
+export interface NumericRange {min:number;max:number;integer?:boolean}
+/** 화면·Worker·단계 검사에서 공유하는 현재 허용 범위. */
+export const CONFIG_RANGES={weight:{min:1,max:501},population:{min:0,max:101,integer:true},generations:{min:1,max:10001,integer:true},crossover:{min:.1,max:1.1},mutation:{min:.01,max:1},tournament:{min:1,max:6,integer:true}} satisfies Record<string,NumericRange>;
+
 /** 한 실행의 최초 입력·자동 공급을 합친 상자 범위. */
 export const MIN_BOXES=1,MAX_BOXES=400;
 /** 입력 편집 후 확정할 정수 개수와 사용자 경고를 반환한다. */
@@ -62,6 +66,6 @@ export function validateConfig(boxes: Box[], truck: Truck, settings: Settings, w
   if (!boxes.length || new Set(boxes.map(b=>b.id)).size !== boxes.length) throw Error('상자 목록이 비어 있거나 ID가 중복됩니다.');
   if ([truck.width,truck.depth,truck.height].some(n=>!Number.isInteger(n)||n<10||n>2000)) throw Error('적재함 치수는 10~2000cm 정수여야 합니다.');
   if (boxes.some(b=>gradeOf(b.size,b.weight)<0 || !Number.isFinite(b.priority) || b.priority<1 || b.priority>5)) throw Error('상자 규격 또는 우선도가 올바르지 않습니다.');
-  if (!Number.isInteger(settings.population)||settings.population<2||settings.population>100 || !Number.isInteger(settings.generations)||settings.generations<1||settings.generations>300 || !Number.isInteger(settings.tournament)||settings.tournament<2||settings.tournament>settings.population || [settings.crossover,settings.mutation].some(n=>!Number.isFinite(n)||n<0||n>1) || !Number.isInteger(settings.seed) || settings.seed<0 || settings.seed>4294967295) throw Error('집단 2~100, 세대 1~300, k 2~집단 수, 교차·변이율 0~1, seed 범위를 확인하세요.');
+  if (!Number.isInteger(settings.population)||settings.population<1||settings.population>CONFIG_RANGES.population.max || !Number.isInteger(settings.generations)||settings.generations<1||settings.generations>CONFIG_RANGES.generations.max || !Number.isInteger(settings.tournament)||settings.tournament<CONFIG_RANGES.tournament.min||settings.tournament>CONFIG_RANGES.tournament.max || (!Number.isFinite(settings.crossover)||settings.crossover<0||settings.crossover>CONFIG_RANGES.crossover.max)||(!Number.isFinite(settings.mutation)||settings.mutation<0||settings.mutation>1) || !Number.isInteger(settings.seed) || settings.seed<0 || settings.seed>4294967295) throw Error('실행 집단 1~101, 세대 1~10001, k 1~6, 교차율 0~1.1, 변이율 0~1, 난수값 범위를 확인하세요.');
   if (Object.values(weights).some(n=>!Number.isFinite(n))||weights.base<0||weights.moves<0||weights.mass<0||(weights.space??0)<0) throw Error('가중치는 유한한 0 이상의 숫자여야 합니다.');
 }

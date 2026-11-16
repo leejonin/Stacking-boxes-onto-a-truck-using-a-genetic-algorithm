@@ -38,6 +38,7 @@ png는 document.fonts.ready 뒤 Blob URL→Image→Canvas.toBlob으로만 변환
 ### `src/export/report.ts`
 
 ```tsx
+import {effectiveCrossover} from '../domain/ranges';
 import {priorityOrder,priorityColor} from '../domain/priority';
 import type {Generation,Individual,Settings,Truck,Weights,MoveEvent,Box,Vec} from '../domain/model';
 
@@ -70,7 +71,7 @@ function metadata(s:ResultSnapshot,gs:Generation[]):string[] {
  const seedLines:string[]=[];for(let i=0;i<seeds.length;i+=6)seedLines.push('범위 내 회차별 GA seed | '+seeds.slice(i,i+6).join(' · '));
  return [...(priorityResult(s)?['목적: 우선도 순 하차 재이동 최소화 | 5 먼저 → 1 나중 | 동점: ID 오름차순']:[]),`완료 ${date(s)} | 세대 ${gs[0]?.number??0}–${gs.at(-1)?.number??0} | 공급 회차 ${[...new Set(gs.map(g=>g.round??1))].join(', ')}`,
  `짐칸 ${s.truck.width}×${s.truck.depth}×${s.truck.height} cm | 회당 할당 ${s.batchCount}개 | ${s.automatic?'자동 공급':'고정 입력'} | 입력 seed ${s.inputSeed}`,
- `집단 ${s.settings.population} | 교차 ${s.settings.crossover} | 변이 ${s.settings.mutation} | k=${s.settings.tournament} | 최초 GA seed ${s.settings.seed} | 회차당 ${s.settings.generations}세대`,
+ `집단 ${s.settings.population} | 교차 입력 ${s.settings.crossover} (실제 ${effectiveCrossover(s.settings.crossover)*100}%) | 변이 ${s.settings.mutation} | k=${s.settings.tournament} | 최초 GA seed ${s.settings.seed} | 회차당 ${s.settings.generations}세대`,
  ...seedLines,...versions.map(v=>{const w=s.weights[v];return w?`가중치 v${v}: ${w.base}×적재율 + ${w.space??20}×공간집중도 − ${w.moves}×${costLabel}횟수 − ${w.mass}×${costLabel}kg`:`가중치 v${v}: 기록 없음 (추정하지 않음)`;})];
 }
 function frame(s:ResultSnapshot,gs:Generation[],title:string,width:number,bodyHeight:number,body:(top:number)=>string,notes:string[]=[]):Graphic {
@@ -277,3 +278,22 @@ export function ResultExport({snapshot}:{snapshot:ResultSnapshot|null}) {
 ## 2026-11-17 01:51:14 (KST) 최종 확인
 
 67개 검사와 타입검사·빌드 통과. 공개 브라우저 6개 우선도 수정/배송순서/PNG·ZIP, 100·220개 집단50·3세대와 일시정지·재개 확인. Pages 성공. 상세 조건·시간·가정·증거는 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md` 최종 기록. 현재 전체 소스 스냅샷 동기화 완료.
+
+
+## 2026-11-17 03:34:49 KST 최종 설정 범위·전구간검증
+
+최종사용자범위는가중치전체1~501/집단0~101/세대1~10001/교차.1~1.1/변이.01~1/k1~6. 집단0은실행안내만,1부터실행한다. 교차입력1.1을보관하되실제확률은1이상100%이며화면·다운로드에입력과실제값을구별한다. 짐칸기본220×520×220과상자누적1~400은유지한다. 실패감점추가없음.
+
+model.CONFIG_RANGES를UI속성·Worker웹검증·11단계검사의단일범위정의로사용한다. normalizeNumber는빈값/무한대/범위밖/정수항목을편집완료에보정하며범위안의소수는그대로보존한다. Field는별도보정안내와안정적인aria-label을사용한다. 집단0안내는Worker생성이전에발생하며Worker도우회명령을재검증한다. 난수값은상자생성과진화계산의재현용임을화면에설명했다. k는복원추출로집단보다클수있다. 일반독립API는과거0가중치/0교차·변이실험을호환하되웹은validateWebConfig로새최소/최대범위를적용한다. 웹비교실험의0교차/0변이조건은.1/.01로바꾸고독립구상차비교조건은유지한다.
+
+범위검사에서상자100/집단101/변이1의2세대가90초내완료되지않아우선순하차offspring도구획·지지면복구경로를사용하도록수정했다. 개별위치전수탐색대신좌표변이후물리복구를수행하며전체상차·하차평가는그대로다. 구상차API는기존분기로유지해35/48전체세대해시를보존했다. 최종전체검사에서이조합은약26.1초에2세대완료했다.
+
+10001세대의세대당setTimeout예약과메시지/화면갱신대기가누적되어전체병렬검사에서는90초에8658세대까지만끝난사례가있었다. tick의12ms예산안에서작은완료세대여러개를계산하고웹명령의batchGenerations=true일때완성된세대를배열로전달한다. App은배열을한번에history에추가하고마지막선택을갱신한다. 세대를생략하지않으며공급/완료/오류알림전에묶음을flush한다. 기존단일메시지명령도호환하고정지/일시정지의동기테스트콜백도존중한다. 작은집단1의10001세대는최종Worker검사48ms,묶음10001세대는2메시지로확인했다. 이는작은입력의측정이며일반속도배수로주장하지않는다.
+
+검사:90개통과/실패0,전체약61.4초. 항목별11단계99조건중0집단안내1건과실제완주98건,총55,272세대/588재생전이검사. 실제재이동2회/6kg의고정배치검사로비용가중치도계산에연결됐음을검사했다. 전체값·상태·수치는 `Info/report/2026-11-17/2026-11-17_033449_설정범위11단계검사_report.md`. 재현명령npm run range-test,새패키지없음. 타입검사/production빌드성공,기존큰번들경고유지.
+
+로컬3상자/집단2/10001세대·최대교차/변이/가중치/k의완주·개체선택·하차재생·확정,6상자/집단101/3세대상차·하차재생을확인했다. 공개100상자/집단101/2세대최대설정완료/재생도확인했다. 최종실행이후콘솔오류0. UI수치영역넘침없음. 실제증거docs/images/ranges-10001-complete.jpg,ranges-max-settings.jpg,ranges-public-max.jpg. 이전실행의반복갱신경고로그는최종실행시각으로구별했다.
+
+배포: gh-pages85e42214ccd315e46749eb64ea4f5691eb7dad31,Pages43929516607 success,UI index-CmmI9d1A.js/Worker evolution-BxiEfROi.js. 기존Public전체프로젝트승인으로소스·문서push예정. 남은확인범위내문제없음. 모든seed/실수값/최대입력전체직교곱의성공·일정시간을보장하지않는다.
+
+상세목표·승인·환경·작동및검증은 `Info/plan/2026-11-17/031259_설정범위와10퍼센트단계검증_plan.md`. 위전체소스는현재코드다.
