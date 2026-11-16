@@ -9,3 +9,7 @@
 - 한계: 현재 배치가 최적·가득 찼다는 보장 없음. 새 상자가 맞지 않는 동안에도 남은 부피가 최소 생성 부피 이상이면 공급·탐색을 계속하며 사용자가 정지할 수 있다. 가중치 변경 시 점수 비교 기준이 달라진다. 새 브라우저 직접 조작은 미확인.
 - 문제: 진화계산 기능의 problem/문제_목록.md에 단일 기록. 소스 스냅샷과 함수 주석 갱신.
 - Git: 기존 Public 저장소 전체 프로젝트·Pages 배포 승인 범위 내에서 변경 파일만 반영 예정.
+
+## 2026-11-16 19:29:46 (KST) 완료 확인
+
+최종 테스트 26개 및 빌드 성공. 소스 main 커밋 189d542, Pages gh-pages 커밋 2fb50f85d63b2c4ec7eda25221e9dd84d331290d. Actions 43849178527 성공, Pages built. 공개 HTML·최신 UI JS(index-CoZWTrKa.js)·Worker(evolution-CTW5UaXm.js) HTTP 200 및 공급량 입력·최신 Worker 연결 확인. 배포 URL: https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/ . UI 직접 조작은 연결·URL 정책 오류로 미확인 상태를 유지한다. 브라우저 확인을 위해 시작한 로컬 개발 서버는 유지한다.

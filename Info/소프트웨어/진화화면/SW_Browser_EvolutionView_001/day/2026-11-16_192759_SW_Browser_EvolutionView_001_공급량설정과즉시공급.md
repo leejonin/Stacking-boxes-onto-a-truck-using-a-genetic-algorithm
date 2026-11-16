@@ -10,3 +10,7 @@
 - 한계: 브라우저 연결 거부와 오류 페이지 URL 정책 차단으로 직접 화면 조작 미확인. 수치·실제 Worker 검증과 구별한다. 기존 용량·탐색 한계 유지.
 - 문제: 이 추가 요청에서 별도 기능 버그 기록 대상 없음. 앞선 공급 경계 문제는 Evolution 기능 problem에 유지한다.
 - Git: 기존 Public main 및 Pages 승인 범위에서 수정 파일만 반영 예정.
+
+## 2026-11-16 19:29:46 (KST) 완료 확인
+
+최종 테스트 26개 및 빌드 성공. 소스 main 커밋 189d542, Pages gh-pages 커밋 2fb50f85d63b2c4ec7eda25221e9dd84d331290d. Actions 43849178527 성공, Pages built. 공개 HTML·최신 UI JS(index-CoZWTrKa.js)·Worker(evolution-CTW5UaXm.js) HTTP 200 및 공급량 입력·최신 Worker 연결 확인. 배포 URL: https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/ . UI 직접 조작은 연결·URL 정책 오류로 미확인 상태를 유지한다. 브라우저 확인을 위해 시작한 로컬 개발 서버는 유지한다.
