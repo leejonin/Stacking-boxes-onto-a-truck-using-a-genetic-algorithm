@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {simulateAccumulatedLoading} from '../src/simulation/accumulated';
-import {type Box,type Vec,DEFAULT_SETTINGS,DEFAULT_WEIGHTS} from '../src/domain/model';
+import {type Box,type Vec,DEFAULT_SETTINGS,DEFAULT_WEIGHTS,Random} from '../src/domain/model';
 import {Engine,finishGeneration} from '../src/ga/engine';
-import {validateLayout} from '../src/domain/packing';
+import {validateLayout,pack} from '../src/domain/packing';
 const box=(id:number):Box=>({id,size:[20,20,20],weight:2,priority:1,grade:0});
 const truck={width:60,depth:100,height:40};
 
@@ -39,4 +39,29 @@ test('누적 공급 이후 모든 후손은 이전 상자 ID를 유지하며 재
   for(const p of g.individuals){assert.ok(p.evaluation.finalCoords[0][0]>=0);assert.ok(p.evaluation.moves>=2);assert.ok(p.evaluation.mass>=4);}
  }
  assert.equal(next.evaluate([[-1,-1,-1],[20,0,0]],[],'유실',false,[1,2]),null);
+});
+
+
+test('미배치 신규 상자는 기존 선호 좌표를 배치한 다음에 넣는다',()=>{
+ const boxes=[box(1),box(2)],small={width:20,depth:40,height:20};
+ for(let seed=0;seed<20;seed++){
+  const result=pack(boxes,small,new Random(seed),[[0,20,0],[-1,-1,-1]],{},true)!;
+  assert.deepEqual(result.coords[0],[0,20,0]);assert.deepEqual(result.coords[1],[0,0,0]);
+ }
+});
+
+test('추가 상차 변이는 기존 누적 상자와 비용을 보존하면서 새 상자를 실제로 싣는다',()=>{
+ const boxes=[box(1),box(2),box(3)],engine=new Engine(boxes,truck,DEFAULT_SETTINGS,DEFAULT_WEIGHTS);
+ engine.accumulated={positions:{1:[0,0,0]},moves:2,mass:4};
+ const parent=engine.evaluate([[0,0,0],[-1,-1,-1],[-1,-1,-1]],[],'부모',false,[1,2,3])!;
+ const candidate=engine.grow(parent),child=engine.evaluate(candidate.coords,candidate.parents,candidate.operation,false,candidate.loadOrder)!;
+ assert.ok(child);assert.equal(child.evaluation.loaded,3);assert.equal(child.evaluation.moves,2);assert.equal(child.evaluation.mass,4);assert.deepEqual(child.evaluation.finalCoords[0],[0,0,0]);assert.deepEqual(child.parents,[parent.id]);
+});
+
+
+test('동일 ID의 중복 배치와 서로 다른 상자의 공간 겹침을 모두 금지한다',()=>{
+ assert.match(validateLayout([box(1),box(1)],[[0,0,0],[20,0,0]],truck)!,/중복/);
+ assert.match(validateLayout([box(1),box(2)],[[0,0,0],[10,0,0]],truck)!,/겹침/);
+ const result=simulateAccumulatedLoading([box(1),box(2)],[[0,0,0],[10,0,0]],truck,[1,2],{positions:{1:[0,0,0]},moves:0,mass:0});
+ assert.equal(result.valid,false);
 });

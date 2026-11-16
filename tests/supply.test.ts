@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {AutomaticSupply,availableLoadingSlot,loadingComplete,validateCompletionPercent} from '../src/simulation/supply';
+import {validateLayout} from '../src/domain/packing';
 import {Engine,finishGeneration} from '../src/ga/engine';
 import {DEFAULT_WEIGHTS,DEFAULT_SETTINGS,DEFAULT_TRUCK,generateBoxes,type Box,type Vec} from '../src/domain/model';
 /** 이미 상차된 작은 상자 목록을 만들어 공급 총량과 물리 공간을 분리해 검사한다. */
@@ -118,4 +119,18 @@ test('실제 Worker가 사용자 지정 완료 적재율을 적용한다',async(
  scope.self.onmessage({data:{type:'start',run:102,boxes:boxes.slice(0,1),truck:{width:100,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026,completionPercent:20}});
  const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
  assert.equal(completed,true);assert.equal(full.generation,1);assert.equal(full.evaluation.utilization,.2);assert.match(message,/목표 적재율 20% 도달/);
+});
+
+
+test('기본 Worker는3세대의 공급2회차에서 기존20개를 보존하며 실제 상차 개수를 늘린다',async()=>{
+ const scope=globalThis as any;let third:any,error='';let finish!:()=>void;
+ const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='generation'&&m.generation.number===3){third=m.generation;scope.self.onmessage({data:{type:'stop',run:103}});finish();}if(m.type==='error'){error=m.message;finish();}};
+ scope.self.onmessage({data:{type:'start',run:103,boxes:generateBoxes(20,2026),truck:DEFAULT_TRUCK,settings:DEFAULT_SETTINGS,weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026,completionPercent:100}});
+ const timeout=setTimeout(()=>{scope.self.onmessage({data:{type:'stop',run:103}});finish();},60000);await done;clearTimeout(timeout);
+ assert.equal(error,'');assert.ok(third);assert.equal(third.round,2);assert.equal(third.boxes.length,40);assert.equal(new Set(third.boxes.map((b:any)=>b.id)).size,40);
+ const best=third.individuals.reduce((a:any,b:any)=>a.score>=b.score?a:b);
+ assert.ok(best.evaluation.loaded>20);assert.ok(third.individuals.some((p:any)=>p.operation==='추가 상차 변이'));
+ for(const p of third.individuals){const indices=third.boxes.map((_:any,i:number)=>i).filter((i:number)=>p.evaluation.finalCoords[i][0]>=0);assert.equal(validateLayout(indices.map((i:number)=>third.boxes[i]),indices.map((i:number)=>p.evaluation.finalCoords[i]),DEFAULT_TRUCK),null);}
+ for(const p of third.individuals)for(const id of Object.keys(third.accumulated.positions)){const i=third.boxes.findIndex((b:any)=>b.id===+id);assert.ok(p.evaluation.finalCoords[i][0]>=0);}
 });

@@ -36,7 +36,7 @@ Worker start/pause/resume/stop/weights는 실행 ID로 분리된다. 약 12ms �
 
 ```tsx
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation,type LoadingSnapshot } from '../domain/model';
-import { pack,randomPosition } from '../domain/packing';
+import { pack,randomPosition,loadingOrder } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
 import {simulateAccumulatedLoading} from '../simulation/accumulated';
 
@@ -73,7 +73,10 @@ export class Engine {
   }
   /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
   offspring(): {coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean}|null {
-    const a=this.select(),b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
+    const a=this.select();
+    // 누적 배치를 보존한 채 미적재 상자의 추가 상차도 변이로 탐색한다. 기존 좌표 교차·재배치 경로도 유지한다.
+    if(this.accumulated&&this.rng.next()<.5)return this.grow(a);
+    const b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
@@ -93,7 +96,23 @@ export class Engine {
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
     const result=pack(this.boxes,this.truck,this.rng,coords,this.fixed,true);
     if(!result)return null;
+    // 좌표 복구로 지지 관계가 바뀐 경우 일부 자식의 순서 유전자도 함께 복구한다. 평가기는 순서를 그대로 실행한다.
+    if(this.accumulated&&this.rng.next()<.5){
+      const indices=this.boxes.map((_,i)=>i).filter(i=>result.coords[i][0]>=0);
+      const repairedOrder=loadingOrder(indices.map(i=>this.boxes[i]),indices.map(i=>result.coords[i]),this.truck,this.fixed);
+      if(repairedOrder)loadOrder.splice(0,loadOrder.length,...repairedOrder,...loadOrder.filter(id=>!repairedOrder.includes(id)));
+    }
     return {...result,loadOrder,parents:cross?[a.id,b.id]:[a.id],operation:cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제')};
+  }
+  /** 부모의 실제 적재 상태에서 무작위 미적재 순서로 입구 접근 가능한 새 위치를 찾는다. 최초 상차 순서를 유전자에 기록한다. */
+  grow(parent:Individual):{coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean} {
+    const coords=parent.evaluation.finalCoords.map(p=>[...p] as Vec);
+    const placed=this.boxes.flatMap((box,i)=>coords[i][0]>=0?[{box,pos:coords[i]}]:[]),added:number[]=[];
+    for(const i of this.rng.shuffle(this.boxes.map((_,i)=>i).filter(i=>coords[i][0]<0))){
+      const pos=randomPosition(this.boxes[i],placed,this.truck,this.rng,true);
+      if(pos){coords[i]=pos;placed.push({box:this.boxes[i],pos});added.push(this.boxes[i].id);}
+    }
+    return {coords,loadOrder:[...parent.loadOrder.filter(id=>!added.includes(id)),...added],parents:[parent.id],operation:'추가 상차 변이',repaired:false};
   }
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
@@ -297,3 +316,5 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 - 2026-11-16 19:44:49 (KST) 최종 조건 보완: 매 세대 한 개체라도100% 또는 최소 상자 추가 공간이 없으면 즉시 완료하며 해당 개체를 표시한다. 단순 입구 차단 제외.35개 테스트·빌드 성공. 앞선100% 단독 조건은 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md` 최종 절로 대체한다.
 
 - 2026-11-16 19:48:40 (KST) 완료 적재율 입력: 기본100%, 자동 공급에서1~100% 설정. Worker 전달·검증과 부피 비율 이상 완료를 적용하며 추가 불가 조건 유지.37개 테스트·빌드 성공. 계획: `Info/plan/2026-11-16/194840_완료적재율입력설정_plan.md`.
+
+- 2026-11-16 20:00:45 (KST) 3세대 정체 수정·ID 중복과 공간 겹침 금지: 기존 선호 좌표 우선, 실제 적재 상태에서 추가 상차 변이, 일부 자식 순서 유전자 복구, 최종 적재 검증을 적용했다.41개 테스트·빌드 성공. 실제 Worker3세대 최고점수 개체28개 적재. 상세: `Info/plan/2026-11-16/200045_3세대상차정체와중복겹침금지_plan.md`.

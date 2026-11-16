@@ -1,5 +1,5 @@
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation,type LoadingSnapshot } from '../domain/model';
-import { pack,randomPosition } from '../domain/packing';
+import { pack,randomPosition,loadingOrder } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
 import {simulateAccumulatedLoading} from '../simulation/accumulated';
 
@@ -36,7 +36,10 @@ export class Engine {
   }
   /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
   offspring(): {coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean}|null {
-    const a=this.select(),b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
+    const a=this.select();
+    // 누적 배치를 보존한 채 미적재 상자의 추가 상차도 변이로 탐색한다. 기존 좌표 교차·재배치 경로도 유지한다.
+    if(this.accumulated&&this.rng.next()<.5)return this.grow(a);
+    const b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
@@ -56,7 +59,23 @@ export class Engine {
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
     const result=pack(this.boxes,this.truck,this.rng,coords,this.fixed,true);
     if(!result)return null;
+    // 좌표 복구로 지지 관계가 바뀐 경우 일부 자식의 순서 유전자도 함께 복구한다. 평가기는 순서를 그대로 실행한다.
+    if(this.accumulated&&this.rng.next()<.5){
+      const indices=this.boxes.map((_,i)=>i).filter(i=>result.coords[i][0]>=0);
+      const repairedOrder=loadingOrder(indices.map(i=>this.boxes[i]),indices.map(i=>result.coords[i]),this.truck,this.fixed);
+      if(repairedOrder)loadOrder.splice(0,loadOrder.length,...repairedOrder,...loadOrder.filter(id=>!repairedOrder.includes(id)));
+    }
     return {...result,loadOrder,parents:cross?[a.id,b.id]:[a.id],operation:cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제')};
+  }
+  /** 부모의 실제 적재 상태에서 무작위 미적재 순서로 입구 접근 가능한 새 위치를 찾는다. 최초 상차 순서를 유전자에 기록한다. */
+  grow(parent:Individual):{coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean} {
+    const coords=parent.evaluation.finalCoords.map(p=>[...p] as Vec);
+    const placed=this.boxes.flatMap((box,i)=>coords[i][0]>=0?[{box,pos:coords[i]}]:[]),added:number[]=[];
+    for(const i of this.rng.shuffle(this.boxes.map((_,i)=>i).filter(i=>coords[i][0]<0))){
+      const pos=randomPosition(this.boxes[i],placed,this.truck,this.rng,true);
+      if(pos){coords[i]=pos;placed.push({box:this.boxes[i],pos});added.push(this.boxes[i].id);}
+    }
+    return {coords,loadOrder:[...parent.loadOrder.filter(id=>!added.includes(id)),...added],parents:[parent.id],operation:'추가 상차 변이',repaired:false};
   }
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {

@@ -51,6 +51,8 @@ export function simulateAccumulatedLoading(boxes:Box[],coords:Vec[],truck:Truck,
   }}
   if(Object.keys(snapshot.positions).some(id=>!loaded.some(p=>p.box.id===+id))||[...moved].some(id=>!loaded.some(p=>p.box.id===id)))return fail('재배치 후 기존 상자를 모두 복귀시키지 못했습니다.');
   const finalCoords:Vec[]=boxes.map(box=>loaded.find(p=>p.box.id===box.id)?.pos??[-1,-1,-1]);
+  const invalid=validateLayout(loaded.map(p=>p.box),loaded.map(p=>p.pos),truck,fixed);
+  if(invalid)return fail(invalid);
   // 실제 남은 배치를 지지 순서로 계산하여 보상과 유효성을 얻는다. 실행 이벤트와 누적 비용은 위 결과를 쓴다.
   const finalOrder=[...loaded].sort((a,b)=>a.pos[2]-b.pos[2]||b.pos[1]-a.pos[1]).map(p=>p.box.id);
   const summary=simulateLoading(boxes,finalCoords,truck,[...finalOrder,...boxes.filter(b=>!finalOrder.includes(b.id)).map(b=>b.id)],fixed,false,reference);

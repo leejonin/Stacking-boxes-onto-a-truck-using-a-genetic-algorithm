@@ -132,6 +132,7 @@ export function fits(box: Box, pos: Vec, placed: Placed[], truck: Truck): boolea
 /** 전체 후보를 검사하고 고정된 좌표의 변경도 거부한다. */
 export function validateLayout(boxes: Box[], coords: Vec[], truck: Truck, fixed: Record<number,Vec> = {}): string | null {
   if(coords.length!==boxes.length) return '모든 상자의 좌표가 필요합니다.';
+  if(new Set(boxes.map(b=>b.id)).size!==boxes.length)return '동일한 상자 ID를 중복 배치할 수 없습니다.';
   const all=boxes.map((box,i)=>({box,pos:coords[i]}));
   for(const a of all) {
     if(!a.pos || !fits(a.box,a.pos,all.filter(b=>b!==a),truck)) return `상자 ${a.box.id}: 경계·겹침·지지 위반`;
@@ -170,7 +171,7 @@ export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[],
   if(validateLayout(placed.map(p=>p.box),placed.map(p=>p.pos),truck)) return null;
   const indices=rng.shuffle(boxes.map((_,i)=>i).filter(i=>!fixed[boxes[i].id]));
   // 부모의 낮은 상자부터 놓아 지지면을 우선 보존한다.
-  if(preferred) indices.sort((a,b)=>(preferred[a]?.[2]??0)-(preferred[b]?.[2]??0));
+  if(preferred) indices.sort((a,b)=>(preferred[a]?.[0]>=0?preferred[a][2]:Infinity)-(preferred[b]?.[0]>=0?preferred[b][2]:Infinity));
   for(const i of indices) {
     const wish=preferred?.[i]; let pos:Vec|null=wish&&fits(boxes[i],wish,placed,truck)?[...wish]:null;
     if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng);if(wish) repaired=true;}
@@ -191,7 +192,6 @@ export function loadingOrder(boxes: Box[], coords: Vec[], truck: Truck, fixed: R
   }
   return order;
 }
-
 ```
 
 함수·구성요소 역할(실제 문서화 주석):
@@ -224,3 +224,5 @@ generateBoxes의 120개 상한을 제거하고 양의 정수만 검사한다. 24
 최신 누적 처리와 함수 호출·검증·한계는 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`에 기록했다. 자동 공급에서는 기존 상자 ID를 보존하면서 좌표 이동을 허용하며, 이번 회차에서 움직인 상자당 1회·해당 중량을 기존 누적 비용에 더한다. 함수 입력·반환값과 실제 처리 순서는 위 코드의 주석·자료형을 따른다.
 
 - 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
+
+- 2026-11-16 20:00:45 (KST) 3세대 정체 수정·ID 중복과 공간 겹침 금지: 기존 선호 좌표 우선, 실제 적재 상태에서 추가 상차 변이, 일부 자식 순서 유전자 복구, 최종 적재 검증을 적용했다.41개 테스트·빌드 성공. 실제 Worker3세대 최고점수 개체28개 적재. 상세: `Info/plan/2026-11-16/200045_3세대상차정체와중복겹침금지_plan.md`.

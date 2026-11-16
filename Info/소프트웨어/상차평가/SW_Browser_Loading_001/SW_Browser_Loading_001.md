@@ -169,6 +169,8 @@ export function simulateAccumulatedLoading(boxes:Box[],coords:Vec[],truck:Truck,
   }}
   if(Object.keys(snapshot.positions).some(id=>!loaded.some(p=>p.box.id===+id))||[...moved].some(id=>!loaded.some(p=>p.box.id===id)))return fail('재배치 후 기존 상자를 모두 복귀시키지 못했습니다.');
   const finalCoords:Vec[]=boxes.map(box=>loaded.find(p=>p.box.id===box.id)?.pos??[-1,-1,-1]);
+  const invalid=validateLayout(loaded.map(p=>p.box),loaded.map(p=>p.pos),truck,fixed);
+  if(invalid)return fail(invalid);
   // 실제 남은 배치를 지지 순서로 계산하여 보상과 유효성을 얻는다. 실행 이벤트와 누적 비용은 위 결과를 쓴다.
   const finalOrder=[...loaded].sort((a,b)=>a.pos[2]-b.pos[2]||b.pos[1]-a.pos[1]).map(p=>p.box.id);
   const summary=simulateLoading(boxes,finalCoords,truck,[...finalOrder,...boxes.filter(b=>!finalOrder.includes(b.id)).map(b=>b.id)],fixed,false,reference);
@@ -181,3 +183,5 @@ export function simulateAccumulatedLoading(boxes:Box[],coords:Vec[],truck:Truck,
 최신 누적 처리와 함수 호출·검증·한계는 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`에 기록했다. 자동 공급에서는 기존 상자 ID를 보존하면서 좌표 이동을 허용하며, 이번 회차에서 움직인 상자당 1회·해당 중량을 기존 누적 비용에 더한다. 함수 입력·반환값과 실제 처리 순서는 위 코드의 주석·자료형을 따른다.
 
 - 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
+
+- 2026-11-16 20:00:45 (KST) 3세대 정체 수정·ID 중복과 공간 겹침 금지: 기존 선호 좌표 우선, 실제 적재 상태에서 추가 상차 변이, 일부 자식 순서 유전자 복구, 최종 적재 검증을 적용했다.41개 테스트·빌드 성공. 실제 Worker3세대 최고점수 개체28개 적재. 상세: `Info/plan/2026-11-16/200045_3세대상차정체와중복겹침금지_plan.md`.
