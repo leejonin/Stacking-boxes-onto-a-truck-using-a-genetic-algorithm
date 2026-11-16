@@ -11,3 +11,7 @@
 - Git: 기존 Public 전체 프로젝트·Pages 승인 범위에서 해당 변경만 반영 예정.
 
 - 순차 도착의 고정 적재물이 있어도 순서 유전자 복구에서 고정 상자 ID를 포함한 전체 순열을 유지함을 추가 검사했다.
+
+## 2026-11-16 23:19:57 (KST) 배포 완료
+
+30개 테스트·빌드 성공. 소스 mainf1f906e, gh-pages8269913fca917ae09ded71184a6161402dcd5029, Actions43884374857 success·Pages built. 공개 HTML·최신 UI(index-Bg3aW9ow.js)·Worker(evolution-BSX2G3-X.js) HTTP200, 전체 할당 옵션·할당 완료 진행률·할당 입력·불가능 조건 메시지 반영 확인. 직접 브라우저 조작 미확인 상태 유지.
