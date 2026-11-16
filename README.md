@@ -2,7 +2,7 @@
 
 **유전 알고리즘으로 탑차의 상차 순서와 배치를 개선하는 3D 웹 실험실입니다.** 적재량과 공간 활용을 높이고, 상차 도중 이미 실은 상자를 다시 옮기는 작업을 줄이는 것이 목적입니다.
 
-[웹에서 실행하기](https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/) · [배포 상태](https://github.com/leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/actions/workflows/deploy-pages.yml)
+[웹에서 실행하기](https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/) · [배포 상태](https://github.com/leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/deployments/github-pages)
 
 ## 주요 기능
 
@@ -95,6 +95,14 @@ npx --no-install tsx scripts/smoke-loading.ts
 
 ## GitHub Pages 배포
 
-`main`에 push하면 `.github/workflows/deploy-pages.yml`이 의존성 설치 → 테스트 → 프로젝트 하위 경로 빌드 → Pages 배포를 수행합니다. Vite는 GitHub Actions의 저장소 이름을 사용해 공개 페이지의 에셋·Worker 경로를 맞춥니다. 로컬 개발은 루트 경로를 사용합니다.
+소스는 `main`, 실행 파일은 `gh-pages` 브랜치에서 관리합니다. GitHub Pages의 게시 소스는 `gh-pages` 브랜치의 루트입니다.
+
+```sh
+npm run deploy
+```
+
+위 명령은 Pages 하위 경로로 빌드한 뒤 기존 GitHub CLI 인증으로 빌드 결과만 `gh-pages`에 게시합니다. `main` 소스 push는 별도로 수행합니다. GitHub CLI 로그인과 저장소 push 권한이 필요하며 토큰을 소스에 저장하지 않습니다. Vite는 배포용 저장소 이름을 사용해 에셋·Worker 경로를 맞추고 로컬 개발은 루트 경로를 사용합니다.
+
+현재 인증에 없는 Actions workflow 권한을 추가로 요구하지 않는 브랜치 게시 방식입니다. `.github/pages-actions-reference.yml`은 참고용이며 자동 실행되는 워크플로가 아닙니다.
 
 공개 저장소에는 소스·에셋·계획서·개발 문서·의존성 잠금 파일을 포함하며 `node_modules/`, `.npm-cache/`, `dist/`, 임시 실험 결과는 제외합니다.

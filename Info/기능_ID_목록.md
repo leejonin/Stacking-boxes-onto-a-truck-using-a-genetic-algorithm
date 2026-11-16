@@ -87,7 +87,7 @@
 - 대분류 / 중분류: 배포 / 정적웹배포.
 - 책임: GitHub Pages 빌드·테스트·배포와 프로젝트 전체 공개 저장소 보관.
 - 관련 ID: 001, SW_Browser 기능 전체.
-- 코드 경로: `.github/workflows/deploy-pages.yml`, `vite.config.ts`.
+- 코드 경로: `scripts/deploy-pages.mjs`, `.github/pages-actions-reference.yml`, `vite.config.ts`.
 - 문서: `Info/배포/정적웹배포/SV_GitHubActions_Deployment_001/SV_GitHubActions_Deployment_001.md`.
 - 상태: 준비·검증 완료, 원격 전송과 배포 최종 결과 확인 중.
 - 이전 ID: 해당 없음.

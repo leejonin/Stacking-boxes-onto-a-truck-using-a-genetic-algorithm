@@ -18,3 +18,5 @@ https://github.com/leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorith
 사용자가 Public·프로젝트 전체 push를 명시했으므로 소스·에셋·원본 PPTX·개발 문서·의존성 잠금·배포 워크플로를 전송한다. 생성 파일·의존성·캐시·로컬 결과는 제외한다. 실제 전송 전 staged·커밋·공개 범위를 최종 확인한다.
 
 상세 코드·입출력·실패 처리: 동일 ID 상세 문서. 자료·버전: Info/기술환경.md. 전송·CI·사이트 접속의 최종 결과는 확인 후 이 문서에 이어 기록한다. 준비 단계에서 추가로 확인된 미해결 문제 없음.
+
+전송 단계 추가 기록: 현재 CLI의 workflow 권한 부족으로 첫 push가 거부됐다. 프로젝트 권한 확대 없이 main 전체 소스와 gh-pages 정적 배포로 전환하며, Actions 파일은 .github/pages-actions-reference.yml로 참고 보존한다. 일반 브랜치 push만 사용하며 강제 push·이력 재작성은 하지 않는다.

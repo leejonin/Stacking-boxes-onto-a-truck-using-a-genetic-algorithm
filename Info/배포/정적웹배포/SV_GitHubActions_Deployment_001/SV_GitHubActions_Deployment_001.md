@@ -26,9 +26,10 @@ Vite는 GITHUB_ACTIONS=true이고 GITHUB_REPOSITORY가 있을 때 저장소 이�
 
 ## 실제 구현
 
-### `.github/workflows/deploy-pages.yml`
+### `.github/pages-actions-reference.yml`
 
 ```yaml
+# 참고용 Actions 설정. 현재 배포는 npm run deploy로 gh-pages 브랜치에 게시한다.
 name: GitHub Pages 배포
 
 on:
@@ -100,5 +101,44 @@ export default defineConfig({
   plugins: [react()],
   assetsInclude: ['**/*.glb'],
 });
+
+```
+
+## 실제 전송 단계의 방식 변경
+
+현재 CLI OAuth 인증은 workflow 권한이 없어 `.github/workflows/deploy-pages.yml`을 포함한 최초 push가 원격에서 거부되었다. 권한 확대를 요구하는 대신 참고 파일을 `.github/pages-actions-reference.yml`로 보존하고 실행 배포는 `scripts/deploy-pages.mjs`의 gh-pages 게시 방식으로 변경했다. 기능 ID는 동일한 정적 웹 배포 책임을 계속 가지므로 유지한다.
+
+npm run deploy → Pages용 빌드 → 고유 임시 폴더의 gh-pages Git 저장소 → 기존 gh-pages가 있으면 fetch·checkout → dist와 .nojekyll 게시 → 일반 push 순서다. 강제 push나 사용자 파일 삭제를 하지 않는다. 원격 URL을 해당 프로젝트로 검사하고 GitHub CLI의 인증 helper를 호출한다. 명령줄에 토큰을 넣거나 전역 인증 설정을 바꾸지 않는다. 공개 Pages 설정은 소스 브랜치가 생성된 뒤 legacy/gh-pages 루트로 바꾼다.
+
+### `scripts/deploy-pages.mjs`
+
+```js
+import {execFileSync} from 'node:child_process';
+import {cpSync,writeFileSync,mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const project=resolve(fileURLToPath(new URL('..',import.meta.url)));
+/** 토큰을 출력·저장하지 않고 GitHub CLI의 기존 인증으로 git을 실행한다. */
+function git(args,cwd=project){return execFileSync('git',['-c','credential.helper=','-c','credential.helper=!gh auth git-credential',...args],{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}
+const remote=git(['remote','get-url','origin']);
+if(!/^https:\/\/github\.com\/leejonin\/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm(?:\.git)?$/.test(remote))throw Error('검증된 프로젝트 원격만 배포할 수 있습니다.');
+const npmCli=process.env.npm_execpath;
+if(!npmCli)throw Error('npm run deploy로 실행하세요.');
+execFileSync(process.execPath,[npmCli,'run','build'],{cwd:project,stdio:'inherit',env:{...process.env,GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm'}});
+const target=mkdtempSync(join(tmpdir(),'loadlab-pages-'));
+git(['init','-b','gh-pages'],target);
+git(['config','user.name',git(['config','user.name'])],target);
+git(['config','user.email',git(['config','user.email'])],target);
+git(['remote','add','origin',remote],target);
+const existing=git(['ls-remote','--heads','origin','gh-pages'],target);
+if(existing){git(['fetch','origin','gh-pages'],target);git(['checkout','-B','gh-pages','FETCH_HEAD'],target);}
+cpSync(join(project,'dist'),target,{recursive:true});
+writeFileSync(join(target,'.nojekyll'),'');
+git(['add','--all'],target);
+if(git(['diff','--cached','--name-only'],target))git(['commit','-m',`GitHub Pages 배포 (${git(['rev-parse','--short','HEAD'])})`],target);
+console.log(git(['push','origin','gh-pages'],target));
+console.log('gh-pages 게시 완료');
 
 ```

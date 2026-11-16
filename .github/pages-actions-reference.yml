@@ -1,3 +1,4 @@
+# 참고용 Actions 설정. 현재 배포는 npm run deploy로 gh-pages 브랜치에 게시한다.
 name: GitHub Pages 배포
 
 on:
