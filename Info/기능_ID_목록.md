@@ -128,3 +128,8 @@
 ## 2026-11-17 01:37:10 (KST) 현재 우선도 하차 목표
 
 현재웹은전량상차가능성통과후상자별높은우선도순하차비용을최적화한다.동점ID순.관련기능ID는기존Packing/Unloading/Evolution/EvolutionView/Scene/ResultExport를재사용.사용자승인/함수/검증/정책/한계는 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md`.기존상차복원기록은과거시점기록이다.
+
+
+## 2026-11-17 02:00:56 KST 입력 반영·누적400 제한
+
+Packing/EvolutionView/Evolution/Arrival 기존 ID 사용. 최신 입력 범위1~400, 고정 수량·seed와 첫 세대 전 가중치 실제 전달 확인. 75개 검사·빌드·브라우저 완료. `Info/plan/2026-11-17/015406_입력반영과누적400제한_plan.md` 참조.

@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { Engine } from '../ga/engine';
+import {MAX_BOXES} from '../domain/model';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
 import {AutomaticSupply} from '../simulation/supply';
@@ -35,7 +36,7 @@ function tick() {
               next.seedLayout=expanded.map((_,i)=>best.evaluation.finalCoords[i]??[-1,-1,-1]);next.version=engine.version;engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'현재 배치에서 최소 규격 상자를 넣을 추가 공간·상차 경로를 찾지 못했습니다.'});
+            send('capacity',{message:engine.boxes.length>=MAX_BOXES?'누적 상자 한도 400개에 도달했습니다.':'현재 배치에서 최소 규격 상자를 넣을 추가 공간·상차 경로를 찾지 못했습니다.'});
           }
           paused=true;send('state',{state:'완료'});return;
         }

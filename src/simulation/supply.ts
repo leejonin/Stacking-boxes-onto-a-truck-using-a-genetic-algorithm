@@ -1,4 +1,4 @@
-import {generateBoxes,Random,type Box,type Vec,type Truck,type Individual} from '../domain/model';
+import {generateBoxes,MAX_BOXES,Random,type Box,type Vec,type Truck,type Individual} from '../domain/model';
 import {type Placed,fits,blockers} from '../domain/packing';
 
 /** 현재 배치에서 최소 규격 상자가 들어갈 위치를 면 좌표의 조합으로 지연 탐색한다. */
@@ -14,14 +14,15 @@ export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck):Vec|n
   return null;
 }
 
-/** 총 공급 개수를 정하지 않고 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */
+/** 누적 최대400개까지 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */
 export class AutomaticSupply {
   round=1;private rng:Random;private nextId:number;
-  constructor(public boxes:Box[],seed:number,public batchSize=20){if(!Number.isInteger(batchSize)||batchSize<1)throw Error('상자 할당 개수는 1 이상의 정수여야 합니다.');this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;}
-  /** 물리적으로 더 실을 후보 공간이 있으면 입력을 확장한다. 설정한 개수는 회당 처리 묶음이며 총량 상한이 아니다. */
+  constructor(public boxes:Box[],seed:number,public batchSize=20){if(!Number.isInteger(batchSize)||batchSize<1||batchSize>MAX_BOXES||boxes.length>MAX_BOXES)throw Error('상자 할당·누적 개수는 1~400개 범위여야 합니다.');this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;}
+  /** 물리적으로 더 실을 후보 공간이 있으면 입력을 확장한다. 남은 누적 한도만큼만 마지막 묶음을 공급한다. */
   expand(best:Individual,truck:Truck):Box[]|null {
+    if(this.boxes.length>=MAX_BOXES)return null;
     if(!availableLoadingSlot(this.boxes,best.evaluation.finalCoords,truck))return null;
-    const incoming=generateBoxes(this.batchSize,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
+    const incoming=generateBoxes(Math.min(this.batchSize,MAX_BOXES-this.boxes.length),this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }
 }

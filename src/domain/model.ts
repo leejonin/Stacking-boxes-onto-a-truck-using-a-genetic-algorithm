@@ -14,6 +14,18 @@ export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:2
 export const DEFAULT_SETTINGS: Settings = { population: 50, generations: 100, crossover: .9, mutation: .05, tournament: 3, seed: 2026 };
 export const DEFAULT_TRUCK: Truck = { width: 220, depth: 520, height: 220 };
 
+/** 한 실행의 최초 입력·자동 공급을 합친 상자 범위. */
+export const MIN_BOXES=1,MAX_BOXES=400;
+/** 입력 편집 후 확정할 정수 개수와 사용자 경고를 반환한다. */
+export function normalizeBoxCount(value:number):{value:number;warning:string} {
+ const count=Number.isFinite(value)?Math.max(MIN_BOXES,Math.min(MAX_BOXES,Math.trunc(value))):MIN_BOXES;
+ return {value:count,warning:count===value?'':`상자 수는 ${MIN_BOXES}~${MAX_BOXES}개 정수입니다. ${count}개로 변경했습니다.`};
+}
+/** 수량·seed가 바뀌면 실제 목록을 새로 만들고, 같으면 편집한 우선도를 보존한다. */
+export function resolveBoxInput(count:number,seed:number,previous:{count:number;seed:number;boxes:Box[]}):Box[] {
+ return previous.count===count&&previous.seed===seed?previous.boxes:generateBoxes(count,seed);
+}
+
 /** 재현 가능한 난수와 순열을 생성한다. 내부 상태는 일시정지 중 유지한다. */
 export class Random {
   constructor(public state: number) { this.state >>>= 0; }
@@ -31,7 +43,7 @@ export function gradeOf(size: Vec, weight: number): number {
 }
 /** 상자별 등급을 균등 추첨하고 해당 최종 등급과 일치하는 치수·중량을 생성한다. */
 export function generateBoxes(count: number, seed: number): Box[] {
-  if (!Number.isInteger(count) || count < 1 || !Number.isInteger(seed) || seed < 0 || seed > 4294967295) throw Error('상자 수는 1 이상의 정수, seed는 0~4294967295 정수여야 합니다.');
+  if (!Number.isInteger(count) || count < MIN_BOXES || count > MAX_BOXES || !Number.isInteger(seed) || seed < 0 || seed > 4294967295) throw Error('상자 수는 1~400 정수, seed는 0~4294967295 정수여야 합니다.');
   const rng = new Random(seed);
   return Array.from({length: count}, (_,i) => {
     const grade = rng.int(0,4), limit = GRADES[grade];
@@ -46,6 +58,7 @@ export function generateBoxes(count: number, seed: number): Box[] {
 }
 /** 사용자 설정의 경계와 유한성을 확인한다. */
 export function validateConfig(boxes: Box[], truck: Truck, settings: Settings, weights: Weights): void {
+  if (boxes.length<MIN_BOXES||boxes.length>MAX_BOXES)throw Error('상자 수는 누적 1~400개여야 합니다.');
   if (!boxes.length || new Set(boxes.map(b=>b.id)).size !== boxes.length) throw Error('상자 목록이 비어 있거나 ID가 중복됩니다.');
   if ([truck.width,truck.depth,truck.height].some(n=>!Number.isInteger(n)||n<10||n>2000)) throw Error('적재함 치수는 10~2000cm 정수여야 합니다.');
   if (boxes.some(b=>gradeOf(b.size,b.weight)<0 || !Number.isFinite(b.priority) || b.priority<1 || b.priority>5)) throw Error('상자 규격 또는 우선도가 올바르지 않습니다.');
