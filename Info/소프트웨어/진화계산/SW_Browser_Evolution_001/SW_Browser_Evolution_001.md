@@ -334,3 +334,22 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 ## 2026-11-17 00:18:02 (KST) 직접 다운로드 검증 완료
 
 완료전잠금·23개완성세대확정·PNG/SVG/ZIP31파일·완료후다른개체선택시같은3D해시·초기화/새실행재잠금·수동완료구분을확인했다.최종회차별seed메타데이터와실제코드스냅샷갱신.상세근거·한계·배포는`Info/plan/2026-11-17/001050_완료시점결과이미지다운로드_plan.md` 참조.
+
+
+## 2026-11-17 00:35:18 (KST) 결과 보존 성능 측정 도구
+
+계획 `Info/plan/2026-11-17/002502_시뮬레이션계산과3D성능최적화_plan.md`.Engine자체는수정하지않고기존설정의3세대시간과시간제외전체Generation해시를출력한다.목적·점수식유지.측정환경에따라시간은달라지며대조결과는계획참조.
+
+### `scripts/benchmark.ts`
+
+```tsx
+import {createHash} from 'node:crypto';
+import {Engine,finishGeneration} from '../src/ga/engine';import {generateBoxes,DEFAULT_SETTINGS} from '../src/domain/model';
+const configs=[{count:35,inputSeed:731,truck:{width:180,depth:400,height:180},population:24,seed:913,crossover:.7,mutation:.2,tournament:4,weights:{base:135,moves:4,mass:.5,space:35}},{count:48,inputSeed:416,truck:{width:240,depth:600,height:240},population:6,seed:51,crossover:1,mutation:.1,tournament:5,weights:{base:60,moves:0,mass:0,space:75}}];
+/** 같은 seed의 세대 전체(시간 제외)를 해시하여 성능 비교 시 결과 변경을 구분한다. */
+const reports=[];
+for(const c of configs){const e=new Engine(generateBoxes(c.count,c.inputSeed),c.truck,{...DEFAULT_SETTINGS,...c},c.weights);e.requireFullAllocation=true;const times=[],hashes=[],attempts=[];
+ for(let i=0;i<3;i++){const g=finishGeneration(e);times.push(g.elapsed);attempts.push(g.attempts);hashes.push(createHash('sha256').update(JSON.stringify({...g,elapsed:0})).digest('hex'));}
+ const report={configuration:c,count:c.count,ms:times.map(n=>Math.round(n)),total:Math.round(times.reduce((a,b)=>a+b,0)),hashes,attempts};reports.push(report);console.log(JSON.stringify(report));}
+console.log(JSON.stringify({note:'ms는 현재 환경의 계산 시간이며 브라우저 표시 시간과 다를 수 있습니다.',reports},null,2));
+```

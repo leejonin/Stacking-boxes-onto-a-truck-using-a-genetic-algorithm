@@ -110,12 +110,18 @@ export type Placed = { box: Box; pos: Vec };
 /** 열린 구간의 겹침: 면 접촉은 충돌이 아니다. */
 export function interval(a: number, size: number, b: number, other: number): boolean { return a < b+other && b < a+size; }
 /** 두 직육면체의 부피 겹침을 검사한다. */
-export function collides(a: Placed,b: Placed): boolean { return a.pos.every((v,i)=>interval(v,a.box.size[i],b.pos[i],b.box.size[i])); }
+export function collides(a: Placed,b: Placed): boolean {
+  return interval(a.pos[0],a.box.size[0],b.pos[0],b.box.size[0])&&interval(a.pos[1],a.box.size[1],b.pos[1],b.box.size[1])&&interval(a.pos[2],a.box.size[2],b.pos[2],b.box.size[2]);
+}
 /** 밑면 전체가 같은 높이 지지면의 합집합에 포함되는지 검사한다. SW_Browser_Packing_001 */
 export function supported(a: Placed, others: Placed[]): boolean {
   if(a.pos[2]===0) return true;
   const [x,y,z]=a.pos,[w,d]=a.box.size;
   const supports=others.filter(b=>b.box.id!==a.box.id && b.pos[2]+b.box.size[2]===z && interval(x,w,b.pos[0],b.box.size[0]) && interval(y,d,b.pos[1],b.box.size[1]));
+  // 한 받침이 밑면 전체를 포함하면 합집합 분할을 만들 필요가 없다.
+  if(supports.some(b=>b.pos[0]<=x&&b.pos[0]+b.box.size[0]>=x+w&&b.pos[1]<=y&&b.pos[1]+b.box.size[1]>=y+d))return true;
+  if(supports.length===1&&w>0&&d>0)return false;
+  if(!supports.length&&w>0&&d>0)return false;
   const xs=[...new Set([x,x+w,...supports.flatMap(b=>[Math.max(x,b.pos[0]),Math.min(x+w,b.pos[0]+b.box.size[0])])])].sort((a,b)=>a-b);
   for(let i=0;i<xs.length-1;i++) {
     const spans=supports.filter(b=>b.pos[0]<=xs[i] && b.pos[0]+b.box.size[0]>=xs[i+1]).map(b=>[Math.max(y,b.pos[1]),Math.min(y+d,b.pos[1]+b.box.size[1])]).sort((a,b)=>a[0]-b[0]);
@@ -125,9 +131,13 @@ export function supported(a: Placed, others: Placed[]): boolean {
   return true;
 }
 /** 단일 후보의 경계·충돌·지지를 확인한다. */
-export function fits(box: Box, pos: Vec, placed: Placed[], truck: Truck): boolean {
-  if(pos.some((v,i)=>!Number.isInteger(v)||v<0||v+box.size[i]>[truck.width,truck.depth,truck.height][i])) return false;
-  const a={box,pos}; return !placed.some(b=>collides(a,b))&&supported(a,placed);
+export function fits(box: Box, pos: Vec, placed: Placed[], truck: Truck, supportLayer=placed): boolean {
+  const [x,y,z]=pos;
+  if(!Number.isInteger(x)||!Number.isInteger(y)||!Number.isInteger(z)||x<0||y<0||z<0||x+box.size[0]>truck.width||y+box.size[1]>truck.depth||z+box.size[2]>truck.height)return false;
+  const a={box,pos};
+  if(!supported(a,supportLayer))return false;
+  for(const b of placed)if(collides(a,b))return false;
+  return true;
 }
 /** 전체 후보를 검사하고 고정된 좌표의 변경도 거부한다. */
 export function validateLayout(boxes: Box[], coords: Vec[], truck: Truck, fixed: Record<number,Vec> = {}): string | null {
@@ -143,26 +153,35 @@ export function validateLayout(boxes: Box[], coords: Vec[], truck: Truck, fixed:
 export function blockers(a: Placed, others: Placed[]): Placed[] {
   return others.filter(b=>b.box.id!==a.box.id && b.pos[1]<a.pos[1] && interval(a.pos[0],a.box.size[0],b.pos[0],b.box.size[0]) && interval(a.pos[2],a.box.size[2],b.pos[2],b.box.size[2]));
 }
-/** 현재 면 좌표와 벽을 기준으로 정수 후보 위치를 만든다. */
-export function candidates(box: Box, placed: Placed[], truck: Truck): Vec[] {
+/** 직교곱 대신 각 축만 보관한다. 기존 후보의 순서와 범위는 그대로다. */
+function candidateAxes(box:Box,placed:Placed[],truck:Truck):[number[],number[],number[]] {
   const xs=new Set([0,truck.width-box.size[0]]),ys=new Set([0,truck.depth-box.size[1]]),zs=new Set([0]);
   for(const b of placed) {
     xs.add(b.pos[0]);xs.add(b.pos[0]+b.box.size[0]);xs.add(b.pos[0]-box.size[0]);
     ys.add(b.pos[1]);ys.add(b.pos[1]+b.box.size[1]);ys.add(b.pos[1]-box.size[1]);zs.add(b.pos[2]+b.box.size[2]);
   }
-  const out: Vec[]=[];
-  for(const z of [...zs].sort((a,b)=>a-b)) for(const y of ys) for(const x of xs) {
-    if(x>=0 && y>=0 && x+box.size[0]<=truck.width && y+box.size[1]<=truck.depth && z+box.size[2]<=truck.height) out.push([x,y,z]);
-  }
+  return [[...xs].filter(x=>x>=0&&x+box.size[0]<=truck.width),[...ys].filter(y=>y>=0&&y+box.size[1]<=truck.depth),[...zs].filter(z=>z+box.size[2]<=truck.height).sort((a,b)=>a-b)];
+}
+/** 전체 후보가 필요한 검사·호환 호출에만 좌표 배열을 만든다. */
+export function candidates(box: Box, placed: Placed[], truck: Truck): Vec[] {
+  const [xs,ys,zs]=candidateAxes(box,placed,truck),out:Vec[]=[];
+  for(const z of zs)for(const y of ys)for(const x of xs)out.push([x,y,z]);
   return out;
 }
 /** 무작위 유효 위치를 선택하고 원본 배열은 보존한다. */
 export function randomPosition(box: Box, placed: Placed[], truck: Truck, rng: Random, accessible = false, compact = false): Vec | null {
-  const options=candidates(box,placed,truck);
-  // 완전 할당 후보는 바닥·안쪽부터 채워 무작위 산재로 생기는 자투리 공간을 줄인다.
-  if(compact)options.sort((a,b)=>a[2]-b[2]||b[1]-a[1]||a[0]-b[0]);
-  const start=!compact&&options.length?rng.int(0,options.length-1):0;
-  for(let k=0;k<options.length;k++) { const pos=options[(start+k)%options.length]; if(fits(box,pos,placed,truck) && (!accessible||!blockers({box,pos},placed).length)) return pos; }
+  const [xs,ys,zs]=candidateAxes(box,placed,truck);
+  // 한 위치 탐색 동안 적재물은 고정이다. 같은 높이의 받침 목록을 반복 필터링하지 않는다.
+  const layers=new Map<number,Placed[]>();
+  for(const p of placed){const top=p.pos[2]+p.box.size[2],layer=layers.get(top);if(layer)layer.push(p);else layers.set(top,[p]);}
+  const supportLayers=zs.map(z=>layers.get(z)??[]);
+  // z→y→x의 기존 정렬은 각 축 정렬과 같다. 거대한 좌표 배열은 만들지 않는다.
+  if(compact){xs.sort((a,b)=>a-b);ys.sort((a,b)=>b-a);}
+  const plane=xs.length*ys.length,total=plane*zs.length,start=!compact&&total?rng.int(0,total-1):0,pos:Vec=[0,0,0];
+  for(let k=0;k<total;k++) {
+    const index=(start+k)%total;pos[0]=xs[index%xs.length];pos[1]=ys[Math.floor(index/xs.length)%ys.length];pos[2]=zs[Math.floor(index/plane)];
+    if(fits(box,pos,placed,truck,supportLayers[Math.floor(index/plane)])&&(!accessible||!blockers({box,pos},placed).length))return pos;
+  }
   return null;
 }
 /** 좌표 유전자를 우선 배치하고 무효 부분만 재배치한다. 고정 상자는 보존한다. */
@@ -263,3 +282,8 @@ generateBoxes의 120개 상한을 제거하고 양의 정수만 검사한다. 24
 ## 2026-11-17 00:18:02 (KST) 직접 다운로드 검증 완료
 
 완료전잠금·23개완성세대확정·PNG/SVG/ZIP31파일·완료후다른개체선택시같은3D해시·초기화/새실행재잠금·수동완료구분을확인했다.최종회차별seed메타데이터와실제코드스냅샷갱신.상세근거·한계·배포는`Info/plan/2026-11-17/001050_완료시점결과이미지다운로드_plan.md` 참조.
+
+
+## 2026-11-17 00:33:48 (KST) 동작 보존 성능 최적화
+
+계획`Info/plan/2026-11-17/002502_시뮬레이션계산과3D성능최적화_plan.md`.위소스스냅샷갱신.44개검사·빌드·실제브라우저3세대/카메라/재생/완료PNG검증통과.기준선대비동작해시6개일치.수치·설정·한계는계획참조.

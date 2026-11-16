@@ -24,8 +24,13 @@ export function TruckView({boxes,coords,truck,events,step,fixed,captureRef}:Prop
     el.appendChild(renderer.domElement);renderer.domElement.setAttribute('aria-label','선택 개체의 탑차 적재 배치 3D');
     const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(36,1,.1,100);
     const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.maxDistance=24;controls.minDistance=3;controls.maxPolarAngle=Math.PI*.49;
+    // 조작·데이터 변경 시에만 그린다. 감쇠 중 change 이벤트는 다음 프레임을 예약한다.
+    let pendingFrame:number|null=null;
+    function renderFrame(){pendingFrame=null;if(!alive)return;controls.update();renderer.render(scene,camera);}
+    const invalidate=()=>{if(alive&&pendingFrame===null)pendingFrame=requestAnimationFrame(renderFrame);};
+    controls.addEventListener('change',invalidate);
     /** 화면 크기와 관계없이 적재함 중심으로 카메라를 복원한다. */
-    const home=()=>{camera.position.set(9,8,9);controls.target.set(.2,1.5,0);controls.update();};home();
+    const home=()=>{camera.position.set(9,8,9);controls.target.set(.2,1.5,0);controls.update();invalidate();};home();
     scene.add(new THREE.HemisphereLight(0xffffff,0x6b776d,3));const light=new THREE.DirectionalLight(0xffffff,3);light.position.set(2,8,4);scene.add(light);
     const grid=new THREE.GridHelper(24,48,0xc5cec3,0xdce2d8);grid.position.y=-.015;scene.add(grid);
     const cargo=new THREE.Group(),vehicle=new THREE.Group();scene.add(cargo,vehicle);
@@ -38,6 +43,7 @@ export function TruckView({boxes,coords,truck,events,step,fixed,captureRef}:Prop
     // 적재함 바닥은 상자 재질과 분리한 단색 큐브다. 팔레트 텍스처를 적용하지 않는다.
     const floorMaterial=new THREE.MeshStandardMaterial({color:0x818c85,roughness:.95});resources.add(floorMaterial);
     const lineMat=new THREE.LineBasicMaterial({color:0x4c574a,transparent:true,opacity:.4});resources.add(lineMat);
+    const activeMaterial=new THREE.LineBasicMaterial({color:0xe36e32}),fixedMaterial=new THREE.LineBasicMaterial({color:0x147c59});resources.add(activeMaterial);resources.add(fixedMaterial);
     /** 좌표 변경만 반영하며 GLB를 다시 다운로드하지 않는다. */
     const update=()=>{
       cargo.clear();const c=current.current,frame=truckFrame(c.truck),{width:w,depth:d,height:h}=frame;
@@ -53,9 +59,10 @@ export function TruckView({boxes,coords,truck,events,step,fixed,captureRef}:Prop
         const group=new THREE.Group();group.scale.set(b.size[1]/100,b.size[2]/100,b.size[0]/100);
         group.position.set(...boxScenePosition(frame,pos,b.size));
         group.add(new THREE.Mesh(cube,baseMaterials[b.grade]),new THREE.LineSegments(edges,lineMat));
-        if(active===b.id||c.fixed[b.id]){const frame=new THREE.LineSegments(edges,new THREE.LineBasicMaterial({color:active===b.id?0xe36e32:0x147c59}));resources.add(frame.material);frame.scale.setScalar(1.02);group.add(frame);}
+        if(active===b.id||c.fixed[b.id]){const frame=new THREE.LineSegments(edges,active===b.id?activeMaterial:fixedMaterial);frame.scale.setScalar(1.02);group.add(frame);}
         cargo.add(group);
       }
+      invalidate();
     };
     api.current={update,home};update();
     if(captureRef)captureRef.current=()=>{update();controls.update();renderer.render(scene,camera);const image=renderer.domElement.toDataURL('image/png');if(image==='data:,')throw Error('3D 캡처 크기를 확인하세요.');return {image,assetStatus:assetRef.current};};
@@ -70,9 +77,8 @@ export function TruckView({boxes,coords,truck,events,step,fixed,captureRef}:Prop
       const bounds=new THREE.Box3().setFromObject(g.scene),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
       const factor=1.1/Math.max(size.x,size.z);g.scene.scale.setScalar(factor);g.scene.position.set(4.9-center.x*factor,-bounds.min.y*factor,-2.5-center.z*factor);scene.add(g.scene);update();
     },undefined,()=>{if(alive)setAssetStatus(s=>s+' · 상자 재질 로딩 실패');});
-    const resize=new ResizeObserver(()=>{const width=el.clientWidth,height=el.clientHeight;renderer.setSize(width,height);camera.aspect=width/Math.max(height,1);camera.updateProjectionMatrix();});resize.observe(el);
-    renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera);});
-    return()=>{alive=false;api.current=null;if(captureRef)captureRef.current=null;resize.disconnect();controls.dispose();renderer.setAnimationLoop(null);for(const r of resources)r.dispose();renderer.dispose();renderer.domElement.remove();};
+    const resize=new ResizeObserver(()=>{const width=el.clientWidth,height=el.clientHeight;renderer.setSize(width,height);camera.aspect=width/Math.max(height,1);camera.updateProjectionMatrix();invalidate();});resize.observe(el);
+    return()=>{alive=false;api.current=null;if(captureRef)captureRef.current=null;if(pendingFrame!==null)cancelAnimationFrame(pendingFrame);resize.disconnect();controls.removeEventListener('change',invalidate);controls.dispose();for(const r of resources)r.dispose();renderer.dispose();renderer.domElement.remove();};
   },[]);
   useEffect(()=>{api.current?.update();},[boxes,coords,truck,events,step,fixed,exterior]);
   return <div className="scene-wrap"><div ref={host} className="scene"/>{error&&<p className="scene-error">{error}</p>}<div className="scene-toolbar"><button onClick={()=>api.current?.home()}>시점 복원</button><button aria-pressed={exterior} onClick={()=>setExterior(x=>!x)}>{exterior?'외벽 숨기기':'외벽 보기'}</button></div><div className="scene-caption"><span><i/> {assetStatus}</span><span>드래그로 회전 · 휠로 확대</span></div></div>;
