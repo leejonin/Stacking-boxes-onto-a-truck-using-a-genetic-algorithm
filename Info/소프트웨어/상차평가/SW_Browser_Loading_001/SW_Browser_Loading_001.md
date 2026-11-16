@@ -1,5 +1,7 @@
 # SW_Browser_Loading_001 — 상차평가
 
+> 2026-11-16 21:20:39 (KST) 현재 기준: 현재 실행은 첫 배포 상차 기준이며 상자 할당 입력만 유지한다. 이후 기능 설명은 당시 기록일 수 있으며 최신 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`.
+
 - 버전: v0.0.1
 - 최초 작성·수정 일시: 2026-11-16 12:49:10 (KST)
 - 지시자: 이종인
@@ -39,7 +41,7 @@ import type {Box,Vec,Truck,Weights,LoadingEvaluation,MoveEvent} from '../domain/
 import {type Placed,validateLayout,fits,blockers,supported} from '../domain/packing';
 
 /** 상차 순서와 목표 위치를 실행한다. 처음 싣는 동작과 재배치를 구별한다. SW_Browser_Loading_001 */
-export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:number[],fixed:Record<number,Vec>={},trace=true,reference?:{count:number;volume:number}):LoadingEvaluation {
+export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:number[],fixed:Record<number,Vec>={},trace=true):LoadingEvaluation {
   const result:LoadingEvaluation={valid:true,reason:'',moves:0,mass:0,loaded:0,loadedVolume:0,totalVolume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0),coverage:0,utilization:0,compactness:0,unloadedIds:[],events:[],finalCoords:boxes.map(()=>[-1,-1,-1])};
   const fail=(reason:string)=>{result.valid=false;result.reason=reason;return result;};
   if(coords.length!==boxes.length||order.length!==boxes.length||new Set(order).size!==boxes.length||order.some(id=>!boxes.some(b=>b.id===id)))return fail('상차 순서에는 각 상자 ID가 정확히 한 번 필요합니다.');
@@ -93,15 +95,14 @@ export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:numbe
   for(const p of loaded) {const i=boxes.findIndex(b=>b.id===p.box.id);result.finalCoords[i]=[...p.pos];result.loadedVolume+=p.box.size[0]*p.box.size[1]*p.box.size[2];}
   result.loaded=loaded.length;result.unloadedIds=boxes.filter(b=>!loaded.some(p=>p.box.id===b.id)).map(b=>b.id);
   // 개수와 부피를 함께 보상하므로 작은 상자만 골라 점수를 높이는 편향을 줄인다.
-  // 자동 공급은 최초 입력을 기준으로 고정하여 공급만으로 기존 배치의 점수가 하락하지 않는다.
-  result.coverage=boxes.length?.5*(result.loaded/(reference?.count??boxes.length)+result.loadedVolume/(reference?.volume??result.totalVolume)):0;
+  result.coverage=boxes.length?.5*(result.loaded/boxes.length+result.loadedVolume/result.totalVolume):0;
   result.utilization=result.loadedVolume/(truck.width*truck.depth*truck.height);
   if(loaded.length){const min=Math.min(...loaded.map(p=>p.pos[1])),max=Math.max(...loaded.map(p=>p.pos[1]+p.box.size[1]));result.compactness=result.loadedVolume/(truck.width*truck.height*(max-min));}
   return result;
 }
-/** 적재 개수·부피·공간 집중도 및 짐칸 활용률 보상(기본 최대50점)에서 상차 재배치 비용을 뺀다. */
-export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'utilization'|'moves'|'mass'>,w:Weights):number {
-  return e.valid?Math.round((w.base*e.coverage+(w.space??20)*e.compactness+(w.fill??50)*e.utilization-w.moves*e.moves-w.mass*e.mass)*100)/100:-Infinity;
+/** 적재 개수·부피 보상과 공간 집중도 보상에서 상차 재배치 비용을 뺀다. */
+export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'moves'|'mass'>,w:Weights):number {
+  return e.valid?Math.round((w.base*e.coverage+(w.space??20)*e.compactness-w.moves*e.moves-w.mass*e.mass)*100)/100:-Infinity;
 }
 ```
 
@@ -113,7 +114,7 @@ export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'comp
 
 현재 동작·검증은 `Info/plan/2026-11-16/192349_자동공급세대계승수정_plan.md` 및 같은 기능의 최신 day에 기록했다. 이전 검증 기록은 당시 결과이며 현재 코드 스냅샷은 위에 갱신했다.
 
-### `src/simulation/accumulated.ts`
+### 과거 구현 기록(현재 실행에서 제외): `src/simulation/accumulated.ts`
 
 ```tsx
 import type {Box,Vec,Truck,LoadingSnapshot,LoadingEvaluation,MoveEvent} from '../domain/model';
@@ -189,3 +190,7 @@ export function simulateAccumulatedLoading(boxes:Box[],coords:Vec[],truck:Truck,
 ## 2026-11-16 20:16:09 (KST) 짐칸 활용률 보상과 세대 상차 완료
 
 기본 최대50점의 실제 짐칸 부피 활용률 보상과 입력·재적용을 추가했다. 추가 적재 공간 없음은 세대 상차 완료이며 다음 세대로 진화한다. 전체 완료는 설정 부피 목표(기본100%, 남은0%)에서 수행한다. 이전 공간 없음 즉시 전체 완료 동작은 이번 사용자 확정으로 대체한다.43개 테스트·빌드 성공. 자세한 입력·호출·검증·한계는 `Info/plan/2026-11-16/201609_짐칸활용률보상과세대상차완료_plan.md`.
+
+## 2026-11-16 21:20:39 (KST) 첫 배포 복원
+
+사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.

@@ -1,5 +1,7 @@
 # SW_Browser_Unloading_001 — 하차평가
 
+> 2026-11-16 21:20:39 (KST) 현재 기준: 현재 앱에서 호출하지 않는 첫 배포의 참조 하차 모듈이다. 이후 기능 설명은 당시 기록일 수 있으며 최신 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`.
+
 - 버전: v0.0.1
 - 최초 작성: 2026-11-16 20:53:14 (KST)
 - 지시자: 이종인 / 작업자: GPT-6 (Codex)
@@ -9,7 +11,7 @@
 ### `src/simulation/unload.ts`
 
 ```tsx
-import { type Box,type Vec,type Truck,type Evaluation,type MoveEvent,type Weights,type LoadingEvaluation,type StackLoadEvaluation } from '../domain/model';
+import { type Box,type Vec,type Truck,type Evaluation,type MoveEvent,type Weights } from '../domain/model';
 import { type Placed,validateLayout,blockers,supported,candidates,fits } from '../domain/packing';
 /** 우선순위대로 실제 방해 상자를 임시 이동·복귀시키며 하차 비용을 계산한다. SW_Browser_Unloading_001 */
 export function simulate(boxes: Box[], coords: Vec[], truck: Truck, trace = true): Evaluation {
@@ -60,17 +62,6 @@ export function simulate(boxes: Box[], coords: Vec[], truck: Truck, trace = true
 }
 /** PPT 기준 100 - 10×횟수 - 1×중량. 무효 배치는 선택할 수 없다. */
 export function fitness(e: Pick<Evaluation,'valid'|'moves'|'mass'>, weights:Weights):number { return e.valid?Math.round((weights.base-weights.moves*e.moves-weights.mass*e.mass)*100)/100:-Infinity; }
-
-/** 실제 실린 상자만 높은 우선순위부터 하차한다. 미적재 sentinel은 하차 대상에서 제외한다. */
-export function simulateLoaded(boxes:Box[],coords:Vec[],truck:Truck,trace=true):Evaluation {
-  if(coords.length!==boxes.length||coords.some(p=>!p||p.length!==3||p.some(x=>!Number.isFinite(x))||p.some(x=>x<0)&&!p.every(x=>x===-1)))return {valid:false,reason:'실제 적재 좌표가 올바르지 않습니다.',moves:0,mass:0,delivered:0,events:[]};
-  const indices=boxes.map((_,i)=>i).filter(i=>coords[i][0]>=0);
-  return simulate(indices.map(i=>boxes[i]),indices.map(i=>coords[i]),truck,trace);
-}
-/** 고정 우선순위 하차의 재이동 횟수·이동 중량과 별도의 상부 하중을 감점하고 적재량·활용률을 보상한다. */
-export function unloadingFitness(e:Pick<Evaluation,'valid'|'moves'|'mass'>,loading:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'utilization'>,bearing:Pick<StackLoadEvaluation,'valid'|'excessMass'>,w:Weights):number {
-  return e.valid&&loading.valid&&bearing.valid?Math.round((w.base+(w.amount??100)*loading.coverage+(w.space??20)*loading.compactness+(w.fill??50)*loading.utilization-w.moves*e.moves-(w.travelMass??1)*e.mass-w.mass*bearing.excessMass)*100)/100:-Infinity;
-}
 ```
 
 ## 2026-11-16 20:53:14 (KST) 현재 목적·입출력·호출·검증
@@ -78,3 +69,7 @@ export function unloadingFitness(e:Pick<Evaluation,'valid'|'moves'|'mass'>,loadi
 하차 우선순위는 고정하고 방해 상자의 이동 횟수와 이동 중량을 최소화하는 배치를 탐색한다. 상부 하중은 별도 안정성 항목이다. 소스 타입·함수 주석과 실제 분기가 입력·단위·반환값·예외의 기준이며 구현 코드 전체를 위에 보존했다. Engine.evaluate→실제 상차→simulateLoaded 및 evaluateStackLoad→unloadingFitness, Worker와 비교 실험에서 호출한다. App은 동일 하차 평가기를3D 재생에 사용한다. 실제 적재물만 하차하고 미적재는 별도 표시한다.
 
 총51개 검사·빌드 성공 및 소형27조건 비교 실험 예산 일치를 확인했다. 직접 브라우저 조작 미확인, 하중은 kg 상당의 사용자 정의 근사 규칙이다. 상세 계산·전후 변경·실측값·한계·관련기능은 `Info/plan/2026-11-16/205314_우선순위하차최적화와상부하중평가_plan.md`. 이전 상차 목적·하차 보류 기록은 당시 기록이며 이번 확정으로 대체한다.
+
+## 2026-11-16 21:20:39 (KST) 첫 배포 복원
+
+사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.

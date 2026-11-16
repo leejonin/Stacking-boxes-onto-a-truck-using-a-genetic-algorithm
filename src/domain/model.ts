@@ -1,18 +1,16 @@
 /** 배치 계산 공통 자료형. SW_Browser_Packing_001 */
 export type Vec = [number, number, number];
-/** 공급 직전에 확정한 적재 상태와 누적 재이동 비용. 좌표는 이동 가능하다. */
-export interface LoadingSnapshot {positions:Record<number,Vec>;moves:number;mass:number}
 export interface Box { id: number; size: Vec; weight: number; priority: number; grade: number }
 export interface Truck { width: number; depth: number; height: number }
-export interface Weights { base: number; moves: number; mass: number; space?: number; fill?:number; amount?:number; travelMass?:number }
+export interface Weights { base: number; moves: number; mass: number; space?: number }
 export interface Settings { population: number; generations: number; crossover: number; mutation: number; tournament: number; seed: number }
 export interface MoveEvent { kind: 'out' | 'return' | 'deliver' | 'load'; boxId: number; from: Vec | null; to: Vec | null; moves: number; mass: number }
 export interface Evaluation { valid: boolean; reason: string; moves: number; mass: number; delivered: number; events: MoveEvent[] }
 export interface LoadingEvaluation {valid:boolean;reason:string;moves:number;mass:number;loaded:number;loadedVolume:number;totalVolume:number;coverage:number;utilization:number;compactness:number;unloadedIds:number[];events:MoveEvent[];finalCoords:Vec[]}
-export interface Individual { id: string; generation: number; parents: string[]; operation: string; repaired: boolean; coords: Vec[]; loadOrder:number[]; evaluation: Omit<LoadingEvaluation, 'events'>; unloading?:Omit<Evaluation,'events'>; bearing?:StackLoadEvaluation; score: number; version: number }
-export interface Generation { number: number; localNumber?:number; capacityReached?:boolean; individuals: Individual[]; best: number; mean: number; version: number; attempts: number; accepted: number; evaluations: number; elapsed: number; boxes?:Box[];fixed?:Record<number,Vec>;round?:number; accumulated?:LoadingSnapshot }
+export interface Individual { id: string; generation: number; parents: string[]; operation: string; repaired: boolean; coords: Vec[]; loadOrder:number[]; evaluation: Omit<LoadingEvaluation, 'events'>; score: number; version: number }
+export interface Generation { number: number; individuals: Individual[]; best: number; mean: number; version: number; attempts: number; accepted: number; evaluations: number; elapsed: number; boxes?:Box[];fixed?:Record<number,Vec>;round?:number }
 export const GRADES = [{name:'극소형', sum:80, mass:2}, {name:'소형', sum:100, mass:5}, {name:'중형', sum:120, mass:10}, {name:'대형', sum:140, mass:15}, {name:'특대형', sum:160, mass:20}];
-export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:20, fill:50, amount:100, travelMass:1 };
+export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:20 };
 export const DEFAULT_SETTINGS: Settings = { population: 50, generations: 100, crossover: .9, mutation: .05, tournament: 3, seed: 2026 };
 export const DEFAULT_TRUCK: Truck = { width: 220, depth: 520, height: 220 };
 
@@ -52,8 +50,5 @@ export function validateConfig(boxes: Box[], truck: Truck, settings: Settings, w
   if ([truck.width,truck.depth,truck.height].some(n=>!Number.isInteger(n)||n<10||n>2000)) throw Error('적재함 치수는 10~2000cm 정수여야 합니다.');
   if (boxes.some(b=>gradeOf(b.size,b.weight)<0 || !Number.isFinite(b.priority) || b.priority<1 || b.priority>5)) throw Error('상자 규격 또는 우선도가 올바르지 않습니다.');
   if (!Number.isInteger(settings.population)||settings.population<2||settings.population>100 || !Number.isInteger(settings.generations)||settings.generations<1||settings.generations>300 || !Number.isInteger(settings.tournament)||settings.tournament<2||settings.tournament>settings.population || [settings.crossover,settings.mutation].some(n=>!Number.isFinite(n)||n<0||n>1) || !Number.isInteger(settings.seed) || settings.seed<0 || settings.seed>4294967295) throw Error('집단 2~100, 세대 1~300, k 2~집단 수, 교차·변이율 0~1, seed 범위를 확인하세요.');
-  if (Object.values(weights).some(n=>!Number.isFinite(n))||weights.base<0||weights.moves<0||weights.mass<0||(weights.space??0)<0||(weights.fill??50)<0||(weights.amount??100)<0||(weights.travelMass??1)<0) throw Error('가중치는 유한한 0 이상의 숫자여야 합니다.');
+  if (Object.values(weights).some(n=>!Number.isFinite(n))||weights.base<0||weights.moves<0||weights.mass<0||(weights.space??0)<0) throw Error('가중치는 유한한 0 이상의 숫자여야 합니다.');
 }
-
-/** 실제 적재 상태의 정적 상부 하중. kg 상당 하중이며 물질의 압축강도를 의미하지 않는다. */
-export interface StackLoadEvaluation {valid:boolean;reason:string;loads:{boxId:number;aboveMass:number;excessMass:number}[];excessMass:number}

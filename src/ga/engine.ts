@@ -1,35 +1,14 @@
-import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation,type LoadingSnapshot } from '../domain/model';
-import { pack,randomPosition,loadingOrder } from '../domain/packing';
+import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
+import { pack,randomPosition } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
-import {simulateAccumulatedLoading} from '../simulation/accumulated';
-import {simulateLoaded,unloadingFitness} from '../simulation/unload';
-import {evaluateStackLoad} from '../simulation/stackLoad';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
 export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   seedLayout:Vec[]|undefined;
-  objective:'loading'|'unloading'='loading';
-  reference:{count:number;volume:number};
-  accumulated:LoadingSnapshot|undefined;
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
-    this.reference={count:boxes.length,volume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)};
-  }
-  /** 공급 전 집단의 좌표·상차 순서·부모 ID와 최초 점수 기준을 다음 회차에 계승한다. */
-  inherit(previous:Engine,prefix:string,committed?:Individual):void {
-    this.reference={...previous.reference};this.version=previous.version;this.objective=previous.objective;
-    if(committed)this.accumulated={positions:Object.fromEntries(previous.boxes.flatMap((b,i)=>committed.evaluation.finalCoords[i][0]>=0?[[b.id,[...committed.evaluation.finalCoords[i]] as Vec]]:[])),moves:committed.evaluation.moves,mass:committed.evaluation.mass};
-    const added=this.boxes.slice(previous.boxes.length).map(b=>b.id);
-    this.population=previous.population.flatMap(p=>{
-      const source=committed?p.evaluation.finalCoords:p.coords;
-      const coords=this.boxes.map((_,i)=>[...(source[i]??[-1,-1,-1])] as Vec);
-      const migrant=this.evaluate(coords,[],p.operation,p.repaired,[...p.loadOrder,...added]);
-      if(!migrant){if(committed)return [];throw Error('공급 전 집단을 계승하지 못했습니다.');}
-      return [{...migrant,id:prefix+p.id,generation:0}];
-    });
-    if(!this.population.length)throw Error('누적 상차 집단을 계승하지 못했습니다.');
   }
   /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
   select():Individual {
@@ -39,10 +18,7 @@ export class Engine {
   }
   /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
   offspring(): {coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean}|null {
-    const a=this.select();
-    // 누적 배치를 보존한 채 미적재 상자의 추가 상차도 변이로 탐색한다. 기존 좌표 교차·재배치 경로도 유지한다.
-    if(this.accumulated&&this.rng.next()<.5)return this.grow(a);
-    const b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
+    const a=this.select(),b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
@@ -62,34 +38,14 @@ export class Engine {
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
     const result=pack(this.boxes,this.truck,this.rng,coords,this.fixed,true);
     if(!result)return null;
-    // 좌표 복구로 지지 관계가 바뀐 경우 일부 자식의 순서 유전자도 함께 복구한다. 평가기는 순서를 그대로 실행한다.
-    if(this.accumulated&&this.rng.next()<.5){
-      const indices=this.boxes.map((_,i)=>i).filter(i=>result.coords[i][0]>=0);
-      const repairedOrder=loadingOrder(indices.map(i=>this.boxes[i]),indices.map(i=>result.coords[i]),this.truck,this.fixed);
-      if(repairedOrder)loadOrder.splice(0,loadOrder.length,...repairedOrder,...loadOrder.filter(id=>!repairedOrder.includes(id)));
-    }
     return {...result,loadOrder,parents:cross?[a.id,b.id]:[a.id],operation:cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제')};
   }
-  /** 부모의 실제 적재 상태에서 무작위 미적재 순서로 입구 접근 가능한 새 위치를 찾는다. 최초 상차 순서를 유전자에 기록한다. */
-  grow(parent:Individual):{coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean} {
-    const coords=parent.evaluation.finalCoords.map(p=>[...p] as Vec);
-    const placed=this.boxes.flatMap((box,i)=>coords[i][0]>=0?[{box,pos:coords[i]}]:[]),added:number[]=[];
-    for(const i of this.rng.shuffle(this.boxes.map((_,i)=>i).filter(i=>coords[i][0]<0))){
-      const pos=randomPosition(this.boxes[i],placed,this.truck,this.rng,true);
-      if(pos){coords[i]=pos;placed.push({box:this.boxes[i],pos});added.push(this.boxes[i].id);}
-    }
-    return {coords,loadOrder:[...parent.loadOrder.filter(id=>!added.includes(id)),...added],parents:[parent.id],operation:'추가 상차 변이',repaired:false};
-  }
-  /** 실제 적재 결과를 구하고 하차 모드에서는 우선순위 하차·상부 하중과 적재 보상으로 평가한다. */
+  /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
-    const {events:_,...evaluation}=this.accumulated?simulateAccumulatedLoading(this.boxes,coords,this.truck,loadOrder,this.accumulated,this.fixed,false,this.reference):simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
+    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
     if(!evaluation.valid)return null;
-    const u=this.objective==='unloading'?simulateLoaded(this.boxes,evaluation.finalCoords,this.truck,false):undefined;
-    const bearing=u?evaluateStackLoad(this.boxes,evaluation.finalCoords,this.truck):undefined;
-    if(u&&!u.valid||bearing&&!bearing.valid)return null;
-    const unloading=u?{valid:u.valid,reason:u.reason,moves:u.moves,mass:u.mass,delivered:u.delivered}:undefined;
-    return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,unloading,bearing,score:unloading&&bearing?unloadingFitness(unloading,evaluation,bearing,this.weights):loadingFitness(evaluation,this.weights),version:this.version};
+    return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
@@ -103,9 +59,7 @@ export class Engine {
       const child=this.population.length?this.offspring():null;
       const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true);
       if(candidate) {
-        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
-        // 누적 상자 유실 후보를 반복 생성해 멈춘 것처럼 보이지 않도록 검증된 부모를 보존한다.
-        if(!p&&this.accumulated&&this.population.length){const parent=this.select();p={...parent,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[parent.id],operation:'유효 배치 보존',coords:parent.coords.map(v=>[...v] as Vec)};}
+        const p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         if(p) {next.push(p);accepted++;}
       }
       yield;
@@ -116,7 +70,7 @@ export class Engine {
   /** 현재 집단만 새 가중치로 평가한다. 이전 세대 스냅샷은 수정하지 않는다. */
   reweight(weights:Weights):Individual[] {
     validateConfig(this.boxes,this.truck,this.settings,weights);this.weights={...weights};this.version++;
-    this.population=this.population.map(p=>({...p,score:p.unloading&&p.bearing?unloadingFitness(p.unloading,p.evaluation,p.bearing,weights):loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
+    this.population=this.population.map(p=>({...p,score:loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
   }
 }
 /** 동기 테스트·실험에서 세대 생성기를 끝까지 진행한다. */

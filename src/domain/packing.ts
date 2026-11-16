@@ -25,7 +25,6 @@ export function fits(box: Box, pos: Vec, placed: Placed[], truck: Truck): boolea
 /** 전체 후보를 검사하고 고정된 좌표의 변경도 거부한다. */
 export function validateLayout(boxes: Box[], coords: Vec[], truck: Truck, fixed: Record<number,Vec> = {}): string | null {
   if(coords.length!==boxes.length) return '모든 상자의 좌표가 필요합니다.';
-  if(new Set(boxes.map(b=>b.id)).size!==boxes.length)return '동일한 상자 ID를 중복 배치할 수 없습니다.';
   const all=boxes.map((box,i)=>({box,pos:coords[i]}));
   for(const a of all) {
     if(!a.pos || !fits(a.box,a.pos,all.filter(b=>b!==a),truck)) return `상자 ${a.box.id}: 경계·겹침·지지 위반`;
@@ -64,7 +63,7 @@ export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[],
   if(validateLayout(placed.map(p=>p.box),placed.map(p=>p.pos),truck)) return null;
   const indices=rng.shuffle(boxes.map((_,i)=>i).filter(i=>!fixed[boxes[i].id]));
   // 부모의 낮은 상자부터 놓아 지지면을 우선 보존한다.
-  if(preferred) indices.sort((a,b)=>(preferred[a]?.[0]>=0?preferred[a][2]:Infinity)-(preferred[b]?.[0]>=0?preferred[b][2]:Infinity));
+  if(preferred) indices.sort((a,b)=>(preferred[a]?.[2]??0)-(preferred[b]?.[2]??0));
   for(const i of indices) {
     const wish=preferred?.[i]; let pos:Vec|null=wish&&fits(boxes[i],wish,placed,truck)?[...wish]:null;
     if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng);if(wish) repaired=true;}

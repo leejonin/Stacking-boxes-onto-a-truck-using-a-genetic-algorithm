@@ -1,5 +1,7 @@
 # SW_Browser_Arrival_001 — 택배도착
 
+> 2026-11-16 21:20:39 (KST) 현재 기준: 현재 실행은 첫 배포 상차 기준이며 상자 할당 입력만 유지한다. 이후 기능 설명은 당시 기록일 수 있으며 최신 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`.
+
 - 버전: v0.0.2
 - 최초 작성·수정 일시: 2026-11-16 12:49:10 (KST)
 - 지시자: 이종인
@@ -58,7 +60,6 @@ export class Arrival {
     this.loaded=placed.map(p=>p.box);this.waiting=boxes.filter(b=>!this.fixed[b.id]);this.log.push(`상차 확정 · ${sequence.map(id=>'#'+id).join(' → ')} · 잔여 ${this.waiting.length}개`);return sequence;
   }
 }
-
 ```
 
 함수·구성요소 역할(실제 문서화 주석):
@@ -75,38 +76,25 @@ import {generateBoxes,Random,type Box,type Vec,type Truck,type Individual} from 
 import {type Placed,fits,blockers} from '../domain/packing';
 
 /** 현재 배치에서 최소 규격 상자가 들어갈 위치를 면 좌표의 조합으로 지연 탐색한다. */
-export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck,requireAccessible=true):Vec|null {
+export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck):Vec|null {
   const placed:Placed[]=boxes.flatMap((box,i)=>coords[i]?.[0]>=0?[{box,pos:coords[i]}]:[]);
   const probe:Box={id:-1,size:[10,10,10],weight:.1,priority:1,grade:0};
   const xs=new Set([0,truck.width-10]),ys=new Set([0,truck.depth-10]),zs=new Set([0]);
   for(const p of placed){xs.add(p.pos[0]);xs.add(p.pos[0]+p.box.size[0]);xs.add(p.pos[0]-10);ys.add(p.pos[1]);ys.add(p.pos[1]+p.box.size[1]);ys.add(p.pos[1]-10);zs.add(p.pos[2]+p.box.size[2]);}
   // 전체 좌표 조합 배열을 만들지 않고 첫 유효 위치에서 반환한다.
   for(const z of [...zs].sort((a,b)=>a-b))for(const y of ys)for(const x of xs){
-    const pos:Vec=[x,y,z];if(fits(probe,pos,placed,truck)&&(!requireAccessible||!blockers({box:probe,pos},placed).length))return pos;
+    const pos:Vec=[x,y,z];if(fits(probe,pos,placed,truck)&&!blockers({box:probe,pos},placed).length)return pos;
   }
   return null;
-}
-
-/** 완료 적재율(기본100%) 도달 또는 최소 생성 규격의 추가 공간 소진을 검사한다. 입구 막힘만으로 완료하지 않는다. */
-export function loadingComplete(boxes:Box[],individual:Individual,truck:Truck,completionPercent=100):boolean {
-  return individual.evaluation.loadedVolume*100>=truck.width*truck.depth*truck.height*completionPercent||availableLoadingSlot(boxes,individual.evaluation.finalCoords,truck,false)===null;
-}
-
-/** 완료 적재율은 짐칸 부피 기준 1~100%의 유한한 숫자여야 한다. */
-export function validateCompletionPercent(percent:number):void {
-  if(!Number.isFinite(percent)||percent<1||percent>100)throw Error('완료 적재율은 1~100% 사이의 숫자여야 합니다.');
 }
 
 /** 총 공급 개수를 정하지 않고 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */
 export class AutomaticSupply {
   round=1;private rng:Random;private nextId:number;
-  constructor(public boxes:Box[],seed:number,public batchSize=20){
-    if(!Number.isInteger(batchSize)||batchSize<1)throw Error('공급량은 1 이상의 정수여야 합니다.');
-    this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;
-  }
-  /** 실제 적재 부피가 짐칸 전체를 채운 경우만 종료한다. 세대·공급량·작은 틈은 완료 조건이 아니다. */
+  constructor(public boxes:Box[],seed:number,public batchSize=20){if(!Number.isInteger(batchSize)||batchSize<1)throw Error('상자 할당 개수는 1 이상의 정수여야 합니다.');this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;}
+  /** 물리적으로 더 실을 후보 공간이 있으면 입력을 확장한다. 설정한 개수는 회당 처리 묶음이며 총량 상한이 아니다. */
   expand(best:Individual,truck:Truck):Box[]|null {
-    if(best.evaluation.loadedVolume>=truck.width*truck.depth*truck.height)return null;
+    if(!availableLoadingSlot(this.boxes,best.evaluation.finalCoords,truck))return null;
     const incoming=generateBoxes(this.batchSize,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }
@@ -137,3 +125,7 @@ AutomaticSupply가 첫 입력 소진 후에도 처리 묶음별 새 상자를 �
 서로 다른 상자는 전체 입력·추가 공급에서 고유 ID를 사용하고 같은 상자는 세대·재배치 후에도 ID를 유지한다. 앞선 한 배치라는 표현으로 요구를 한정하지 않는다. 기존 구현은 이 기준을 유지한다. 확인 근거·강화한 검사: `Info/plan/2026-11-16/200438_상자ID전체공급고유성기준확정_plan.md`.
 
 - 2026-11-16 20:05:01 (KST) 검증 완료: 공급 회귀 검사1개 통과.6회 추가 공급 전체66개 ID 유일성, 매 회차 이전 상자의 ID·데이터 보존, 신규 ID와 전체 기존 ID 비중복, seed재현성 확인. 실행 소스 변경 없음. 기존41개 전체 검사 결과를 새로 실행한 것으로 주장하지 않는다. 문서·검사 변경만 Public main에 반영한다.
+
+## 2026-11-16 21:20:39 (KST) 첫 배포 복원
+
+사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.

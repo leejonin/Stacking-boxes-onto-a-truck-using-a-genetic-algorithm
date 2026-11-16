@@ -8,7 +8,7 @@ import {Engine,finishGeneration} from '../src/ga/engine';
 import {Arrival} from '../src/simulation/arrival';
 /** 상차 순서의 손계산에 사용하는 같은 크기의 상자. */
 const box=(id:number):Box=>({id,size:[20,20,20],weight:2,priority:1,grade:0});
-const truck={width:20,depth:60,height:20},weights={base:100,moves:10,mass:1,space:0,fill:0};
+const truck={width:20,depth:60,height:20},weights={base:100,moves:10,mass:1,space:0};
 test('최초 상차는 무료, 앞 상자를 먼저 넣으면 뒤 상자 상차에 2회·4kg 재배치',()=>{
  const boxes=[box(1),box(2)],coords:Vec[]=[[0,0,0],[0,40,0]];
  const bad=simulateLoading(boxes,coords,truck,[1,2]);
@@ -54,20 +54,4 @@ test('용량 초과 입력도 GA가 유효한 부분 상차를 비교하며 순�
 test('일부만 상차 확정해도 미적재 상자는 대기 공간에 남고 도착 데이터가 사라지지 않는다',()=>{
  const a=new Arrival([box(1),box(2)],7);a.receive();a.receive();const b=[...a.waiting].sort((a,b)=>a.id-b.id);
  a.commit(b,[[0,0,0],[-1,-1,-1]],truck);assert.equal(a.loaded.length,1);assert.equal(a.waiting.length,1);assert.equal(a.waiting[0].id,2);assert.equal(a.cursor,2);
-});
-
-
-test('짐칸 부피 활용률 보상은 기본 최대50점이며 사용자 입력에 비례한다',()=>{
- const e={valid:true,coverage:0,compactness:0,moves:0,mass:0,utilization:.8},w={base:0,moves:0,mass:0,space:0};
- assert.equal(DEFAULT_WEIGHTS.fill,50);
- assert.equal(loadingFitness(e,w),40);assert.equal(loadingFitness({...e,utilization:.9},w),45);
- assert.equal(loadingFitness({...e,utilization:1},w),50);assert.equal(loadingFitness(e,{...w,fill:100}),80);
- assert.equal(loadingFitness(e,{...w,fill:0}),0);
-});
-
-test('짐칸 활용률 보상 변경을 현재 집단에 재적용하며 좌표와 누적 비용을 유지한다',()=>{
- const engine=new Engine([box(1)],truck,{...DEFAULT_SETTINGS,population:3},DEFAULT_WEIGHTS);finishGeneration(engine);
- const before=structuredClone(engine.population);engine.reweight({...DEFAULT_WEIGHTS,fill:100});
- for(let i=0;i<before.length;i++){assert.ok(Math.abs(engine.population[i].score-before[i].score-50*before[i].evaluation.utilization)<=.011);assert.deepEqual(engine.population[i].coords,before[i].coords);assert.deepEqual(engine.population[i].evaluation,before[i].evaluation);}
- assert.throws(()=>engine.reweight({...DEFAULT_WEIGHTS,fill:-1}));
 });

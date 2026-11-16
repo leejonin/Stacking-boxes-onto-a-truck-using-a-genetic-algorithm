@@ -1,5 +1,7 @@
 # SW_Browser_Scene_001 — 배치3D
 
+> 2026-11-16 21:20:39 (KST) 현재 기준: 현재 실행은 첫 배포 상차 기준이며 상자 할당 입력만 유지한다. 이후 기능 설명은 당시 기록일 수 있으며 최신 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`.
+
 - 버전: v0.0.2
 - 최초 작성 일시: 2026-11-16 12:49:10 (KST)
 - 수정 일시: 2026-11-16 13:00:16 (KST)
@@ -112,7 +114,6 @@ export function TruckView({boxes,coords,truck,events,step,fixed}:Props) {
   useEffect(()=>{api.current?.update();},[boxes,coords,truck,events,step,fixed,exterior]);
   return <div className="scene-wrap"><div ref={host} className="scene"/>{error&&<p className="scene-error">{error}</p>}<div className="scene-toolbar"><button onClick={()=>api.current?.home()}>시점 복원</button><button aria-pressed={exterior} onClick={()=>setExterior(x=>!x)}>{exterior?'외벽 숨기기':'외벽 보기'}</button></div><div className="scene-caption"><span><i/> {assetStatus}</span><span>드래그로 회전 · 휠로 확대</span></div></div>;
 }
-
 ```
 
 함수·구성요소 역할(실제 문서화 주석):
@@ -138,9 +139,12 @@ export function truckFrame(truck:Truck):SceneFrame {
 export function boxScenePosition(frame:SceneFrame,pos:Vec,size:Vec):Vec {
   return [frame.rear-(pos[1]+size[1]/2)/100,frame.floor+(pos[2]+size[2]/2)/100,-frame.width/2+(pos[0]+size[0]/2)/100];
 }
-
 ```
 
 ## 2026-11-16 13:00:16 (KST) 추가 수정
 
 원본 GLB의 실제 운전석·적재함 경계를 기준으로 모델·바닥·상자 좌표를 통일했다. 바닥은 단색 일반 큐브이며 상자용 텍스처 재질과 분리했다. tests/truck-frame.test.ts에서 실제 원본 GLB를 읽어 변경 치수 27조합의 비침범·내부 경계와 바닥 일치를 검증했다.
+
+## 2026-11-16 21:20:39 (KST) 첫 배포 복원
+
+사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.
