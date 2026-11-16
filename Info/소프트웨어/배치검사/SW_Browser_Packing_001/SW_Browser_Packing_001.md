@@ -1,5 +1,8 @@
 # SW_Browser_Packing_001 — 배치검사
 
+> 2026-11-17 01:37:10 (KST) 최신 웹 기준: 전량적재를통과한뒤우선도순하차의재이동비용을최적화한다.사용자승인‘ㅇㅇ’.이하과거상차복원기록은당시기준이며현재목적은 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md` 참조.
+
+
 > 2026-11-16 21:20:39 (KST) 현재 기준: 현재 실행은 첫 배포 상차 기준이며 상자 할당 입력만 유지한다. 이후 기능 설명은 당시 기록일 수 있으며 최신 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`.
 
 - 버전: v0.0.3
@@ -47,8 +50,8 @@ export interface Settings { population: number; generations: number; crossover: 
 export interface MoveEvent { kind: 'out' | 'return' | 'deliver' | 'load'; boxId: number; from: Vec | null; to: Vec | null; moves: number; mass: number }
 export interface Evaluation { valid: boolean; reason: string; moves: number; mass: number; delivered: number; events: MoveEvent[] }
 export interface LoadingEvaluation {valid:boolean;reason:string;moves:number;mass:number;loaded:number;loadedVolume:number;totalVolume:number;coverage:number;utilization:number;compactness:number;unloadedIds:number[];events:MoveEvent[];finalCoords:Vec[]}
-export interface Individual { id: string; generation: number; parents: string[]; operation: string; repaired: boolean; coords: Vec[]; loadOrder:number[]; evaluation: Omit<LoadingEvaluation, 'events'>; score: number; version: number }
-export interface Generation { number: number; individuals: Individual[]; best: number; mean: number; version: number; attempts: number; accepted: number; evaluations: number; elapsed: number; boxes?:Box[];fixed?:Record<number,Vec>;round?:number;weights?:Weights;settings?:Settings }
+export interface Individual { id: string; generation: number; parents: string[]; operation: string; repaired: boolean; coords: Vec[]; loadOrder:number[]; unloadOrder?:number[]; unloading?:Omit<Evaluation,'events'>; evaluation: Omit<LoadingEvaluation, 'events'>; score: number; version: number }
+export interface Generation { number: number; individuals: Individual[]; best: number; mean: number; version: number; attempts: number; accepted: number; evaluations: number; elapsed: number; boxes?:Box[];fixed?:Record<number,Vec>;round?:number;weights?:Weights;settings?:Settings;objective?:'priority-unload' }
 export const GRADES = [{name:'극소형', sum:80, mass:2}, {name:'소형', sum:100, mass:5}, {name:'중형', sum:120, mass:10}, {name:'대형', sum:140, mass:15}, {name:'특대형', sum:160, mass:20}];
 export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:20 };
 export const DEFAULT_SETTINGS: Settings = { population: 50, generations: 100, crossover: .9, mutation: .05, tournament: 3, seed: 2026 };
@@ -316,3 +319,39 @@ generateBoxes의 120개 상한을 제거하고 양의 정수만 검사한다. 24
 ## 2026-11-17 01:01:28 (KST) 100개·220개 정체 추가 최적화
 
 목적/점수/물리제약/전체할당/완료시다운로드유지.기존정체초기집단에구획복구,필요조건빠른거부,상자사이협력실행을추가했다.52개검사·빌드·기본각100세대계측/브라우저확인.동작변화와설정·시간·한계: `Info/plan/2026-11-17/004153_100개220개대규모입력추가최적화_plan.md`.위실제코드전체갱신.
+
+
+### `src/domain/priority.ts`
+
+```tsx
+import type {Box} from './model';
+/** 우선도는 배송 입력이다. GA가 바꾸지 않으며 큰 수치가 먼저, 동점은 ID순이다. */
+export function priorityOrder(boxes:Box[]):Box[]{return [...boxes].sort((a,b)=>b.priority-a.priority||a.id-b.id);}
+/** 1(파랑)→5(빨강)의 고정 우선도 범례. 등급 색상과 구별한다. */
+export function priorityColor(priority:number):string {return `hsl(${Math.round(220*(5-Math.max(1,Math.min(5,priority)))/4)}, 68%, 50%)`;}
+```
+
+
+### `src/domain/spaces.ts`
+
+```tsx
+import type {Truck} from './model';import type {Placed} from './packing';
+export interface Region{x:number;y:number;z:number;w:number;d:number;h:number}
+/** 점유 상자를 빼고 서로 겹치지 않는 여섯 슬라브로 나눈다. */
+export function occupy(regions:Region[],p:Placed):Region[]{
+ const out:Region[]=[];for(const r of regions){const x=Math.max(r.x,p.pos[0]),y=Math.max(r.y,p.pos[1]),z=Math.max(r.z,p.pos[2]),xx=Math.min(r.x+r.w,p.pos[0]+p.box.size[0]),yy=Math.min(r.y+r.d,p.pos[1]+p.box.size[1]),zz=Math.min(r.z+r.h,p.pos[2]+p.box.size[2]);if(x>=xx||y>=yy||z>=zz){out.push(r);continue;}
+ out.push(...[{x:r.x,y:r.y,z:r.z,w:x-r.x,d:r.d,h:r.h},{x:xx,y:r.y,z:r.z,w:r.x+r.w-xx,d:r.d,h:r.h},{x,y:r.y,z:r.z,w:xx-x,d:y-r.y,h:r.h},{x,y:yy,z:r.z,w:xx-x,d:r.y+r.d-yy,h:r.h},{x,y,z:r.z,w:xx-x,d:yy-y,h:z-r.z},{x,y,z:zz,w:xx-x,d:yy-y,h:r.z+r.h-zz}].filter(r=>r.w>0&&r.d>0&&r.h>0));}return out;
+}
+/** 현재 적재물과 겹치지 않는 빈 구획을 만든다. 실제 배치에는 별도 지지·경로 검사가 필요하다. */
+export function freeRegions(placed:Placed[],truck:Truck):Region[]{let regions:Region[]=[{x:0,y:0,z:0,w:truck.width,d:truck.depth,h:truck.height}];for(const p of placed)regions=occupy(regions,p);return regions;}
+```
+
+
+## 2026-11-17 01:37:10 (KST) 상자별 우선도 실평가 연결
+
+입력/우선순하차/GA점수/재생/내보내기연동.66개검사·빌드통과.작동순서·함수별역할·정책변경·단위·제약·검증은 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md`.위전체소스는현재구현이다.
+
+
+## 2026-11-17 01:51:14 (KST) 최종 확인
+
+67개 검사와 타입검사·빌드 통과. 공개 브라우저 6개 우선도 수정/배송순서/PNG·ZIP, 100·220개 집단50·3세대와 일시정지·재개 확인. Pages 성공. 상세 조건·시간·가정·증거는 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md` 최종 기록. 현재 전체 소스 스냅샷 동기화 완료.

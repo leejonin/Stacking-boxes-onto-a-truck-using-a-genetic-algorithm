@@ -16,3 +16,11 @@
 .control-dock .controls{flex-wrap:wrap}
 @media(max-width:1000px){.export-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.result-export{margin:20px 28px}.result-export .export-options{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){.export-grid{grid-template-columns:1fr}.result-export{margin:16px}.result-export .export-options{grid-template-columns:1fr}.result-export fieldset{padding:0 16px}}
+
+/* 우선도 입력·하차 재생 */
+.priority-table{max-height:420px;overflow:auto}.priority-table th{position:sticky;top:0;background:#f5f8f3;z-index:1}
+.priority-table input{width:90px;padding:8px;border:1px solid #cddbcf;border-radius:5px;font:inherit;color:#183c3d;background:#fff}.priority-table input:disabled{background:#f1f4ef;color:#526866}
+.replay-mode{display:flex;gap:7px;margin-bottom:12px}.replay-mode [aria-pressed=true]{background:#147957;color:#fff}
+.priority-legend{position:absolute;left:16px;bottom:36px;display:flex;gap:6px;align-items:center;background:#ffffffd9;padding:5px 8px;border-radius:5px;font-size:10px;color:#183c3d}.priority-legend[hidden]{display:none}.priority-legend i{width:90px;height:8px;border-radius:8px;background:linear-gradient(90deg,hsl(220,68%,50%),hsl(110,68%,50%),hsl(0,68%,50%))}
+.weight-footer{flex-wrap:wrap}.individual-stats b{font-size:clamp(16px,1.5vw,24px);overflow-wrap:anywhere}.box-list{scroll-margin-top:24px}
+@media(max-width:600px){.scene-toolbar{gap:4px;flex-wrap:wrap}.scene-toolbar button{font-size:9px;padding:6px}.individual-stats b{font-size:16px}}

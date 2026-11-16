@@ -1,3 +1,6 @@
+import {priorityOrder} from '../domain/priority';
+import {simulateSteps} from '../simulation/unload';
+import {priorityFitness} from '../simulation/objective';
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
 import { pack,packSteps,randomPosition,loadingOrder,partitionPack,validateLayout } from '../domain/packing';
 import { simulateLoading,loadingFitness,completeSupportOrder } from '../simulation/loading';
@@ -9,6 +12,7 @@ export class Engine {
   private partitionMode=false;
   seedLayout:Vec[]|undefined;
   requireFullAllocation=false;
+  priorityUnloading=false;
   allocationProgress={ready:0,attempts:0,mostLoaded:0};
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
@@ -46,16 +50,21 @@ export class Engine {
     if(!result)return null;
     return {...result,loadOrder,...(this.partitionMode?{repairOrder:result.loadOrder}:{}),parents:cross?[a.id,b.id]:[a.id],operation:(cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제'))+(this.partitionMode&&result.repaired?'·구획 복구':'')};
   }
-  /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
-  evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
+  /** 전량 상차를 검증한 뒤 웹 목적에서는 고정 우선도 순 하차 비용으로 평가한다. */
+  *evaluateSteps(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Generator<void,Individual|null,void> {
     this.evaluations++;
-    if(this.requireFullAllocation&&!completeSupportOrder(this.boxes,coords,loadOrder,this.fixed))return null;
+    if((this.requireFullAllocation||this.priorityUnloading)&&!completeSupportOrder(this.boxes,coords,loadOrder,this.fixed))return null;
     const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
     if(!evaluation.valid)return null;
     this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
-    if(this.requireFullAllocation&&evaluation.loaded!==this.boxes.length)return null;
-    return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
+    if((this.requireFullAllocation||this.priorityUnloading)&&evaluation.loaded!==this.boxes.length)return null;
+    const extra=this.priorityUnloading?yield* simulateSteps(this.boxes,evaluation.finalCoords,this.truck,false,true):null;
+    if(extra&&!extra.valid)return null;
+    const unloading=extra?{valid:extra.valid,reason:extra.reason,moves:extra.moves,mass:extra.mass,delivered:extra.delivered}:undefined;
+    return {...(unloading?{unloading,unloadOrder:priorityOrder(this.boxes).map(b=>b.id)}:{}),id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:unloading?priorityFitness(evaluation,unloading,this.weights):loadingFitness(evaluation,this.weights),version:this.version};
   }
+  /** 독립 동기 호출도 동일 평가 경로를 사용한다. */
+  evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {const it=this.evaluateSteps(coords,parents,operation,repaired,loadOrder);let r=it.next();while(!r.done)r=it.next();return r.value;}
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
     const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=false;
@@ -81,23 +90,23 @@ export class Engine {
       if(rescue)this.partitionMode=true;
       const candidate=this.population.length?child:rescue?partitionPack(this.boxes,this.truck,this.rng):(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
       if(candidate) {
-        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        let p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
         if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
           const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
-          if(order)p=this.evaluate(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
+          if(order)p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
         }
         if(p) {next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }
     this.population=next;this.generation++;
-    return {number:this.generation,individuals:next,best:Math.max(...next.map(p=>p.score)),mean:next.reduce((a,b)=>a+b.score,0)/next.length,version:this.version,attempts,accepted,evaluations:this.evaluations,elapsed:performance.now()-start};
+    return {...(this.priorityUnloading?{objective:'priority-unload' as const}:{}),number:this.generation,individuals:next,best:Math.max(...next.map(p=>p.score)),mean:next.reduce((a,b)=>a+b.score,0)/next.length,version:this.version,attempts,accepted,evaluations:this.evaluations,elapsed:performance.now()-start};
   }
   /** 현재 집단만 새 가중치로 평가한다. 이전 세대 스냅샷은 수정하지 않는다. */
   reweight(weights:Weights):Individual[] {
     validateConfig(this.boxes,this.truck,this.settings,weights);this.weights={...weights};this.version++;
-    this.population=this.population.map(p=>({...p,score:loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
+    this.population=this.population.map(p=>({...p,score:this.priorityUnloading&&p.unloading?priorityFitness(p.evaluation,p.unloading,weights):loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
   }
 }
 /** 동기 테스트·실험에서 세대 생성기를 끝까지 진행한다. */

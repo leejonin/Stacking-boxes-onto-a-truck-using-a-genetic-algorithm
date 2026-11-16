@@ -1,5 +1,8 @@
 # SW_Browser_Evolution_001 — 진화계산
 
+> 2026-11-17 01:37:10 (KST) 최신 웹 기준: 전량적재를통과한뒤우선도순하차의재이동비용을최적화한다.사용자승인‘ㅇㅇ’.이하과거상차복원기록은당시기준이며현재목적은 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md` 참조.
+
+
 > 2026-11-16 21:20:39 (KST) 현재 기준: 현재 실행은 첫 배포 상차 기준이며 상자 할당 입력만 유지한다. 이후 기능 설명은 당시 기록일 수 있으며 최신 기준은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`.
 
 - 버전: v0.0.2
@@ -37,6 +40,9 @@ Worker start/pause/resume/stop/weights는 실행 ID로 분리된다. 약 12ms �
 ### `src/ga/engine.ts`
 
 ```tsx
+import {priorityOrder} from '../domain/priority';
+import {simulateSteps} from '../simulation/unload';
+import {priorityFitness} from '../simulation/objective';
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
 import { pack,packSteps,randomPosition,loadingOrder,partitionPack,validateLayout } from '../domain/packing';
 import { simulateLoading,loadingFitness,completeSupportOrder } from '../simulation/loading';
@@ -48,6 +54,7 @@ export class Engine {
   private partitionMode=false;
   seedLayout:Vec[]|undefined;
   requireFullAllocation=false;
+  priorityUnloading=false;
   allocationProgress={ready:0,attempts:0,mostLoaded:0};
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
@@ -85,16 +92,21 @@ export class Engine {
     if(!result)return null;
     return {...result,loadOrder,...(this.partitionMode?{repairOrder:result.loadOrder}:{}),parents:cross?[a.id,b.id]:[a.id],operation:(cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제'))+(this.partitionMode&&result.repaired?'·구획 복구':'')};
   }
-  /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
-  evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
+  /** 전량 상차를 검증한 뒤 웹 목적에서는 고정 우선도 순 하차 비용으로 평가한다. */
+  *evaluateSteps(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Generator<void,Individual|null,void> {
     this.evaluations++;
-    if(this.requireFullAllocation&&!completeSupportOrder(this.boxes,coords,loadOrder,this.fixed))return null;
+    if((this.requireFullAllocation||this.priorityUnloading)&&!completeSupportOrder(this.boxes,coords,loadOrder,this.fixed))return null;
     const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
     if(!evaluation.valid)return null;
     this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
-    if(this.requireFullAllocation&&evaluation.loaded!==this.boxes.length)return null;
-    return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
+    if((this.requireFullAllocation||this.priorityUnloading)&&evaluation.loaded!==this.boxes.length)return null;
+    const extra=this.priorityUnloading?yield* simulateSteps(this.boxes,evaluation.finalCoords,this.truck,false,true):null;
+    if(extra&&!extra.valid)return null;
+    const unloading=extra?{valid:extra.valid,reason:extra.reason,moves:extra.moves,mass:extra.mass,delivered:extra.delivered}:undefined;
+    return {...(unloading?{unloading,unloadOrder:priorityOrder(this.boxes).map(b=>b.id)}:{}),id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:unloading?priorityFitness(evaluation,unloading,this.weights):loadingFitness(evaluation,this.weights),version:this.version};
   }
+  /** 독립 동기 호출도 동일 평가 경로를 사용한다. */
+  evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {const it=this.evaluateSteps(coords,parents,operation,repaired,loadOrder);let r=it.next();while(!r.done)r=it.next();return r.value;}
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
     const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=false;
@@ -120,23 +132,23 @@ export class Engine {
       if(rescue)this.partitionMode=true;
       const candidate=this.population.length?child:rescue?partitionPack(this.boxes,this.truck,this.rng):(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
       if(candidate) {
-        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        let p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
         if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
           const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
-          if(order)p=this.evaluate(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
+          if(order)p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
         }
         if(p) {next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }
     this.population=next;this.generation++;
-    return {number:this.generation,individuals:next,best:Math.max(...next.map(p=>p.score)),mean:next.reduce((a,b)=>a+b.score,0)/next.length,version:this.version,attempts,accepted,evaluations:this.evaluations,elapsed:performance.now()-start};
+    return {...(this.priorityUnloading?{objective:'priority-unload' as const}:{}),number:this.generation,individuals:next,best:Math.max(...next.map(p=>p.score)),mean:next.reduce((a,b)=>a+b.score,0)/next.length,version:this.version,attempts,accepted,evaluations:this.evaluations,elapsed:performance.now()-start};
   }
   /** 현재 집단만 새 가중치로 평가한다. 이전 세대 스냅샷은 수정하지 않는다. */
   reweight(weights:Weights):Individual[] {
     validateConfig(this.boxes,this.truck,this.settings,weights);this.weights={...weights};this.version++;
-    this.population=this.population.map(p=>({...p,score:loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
+    this.population=this.population.map(p=>({...p,score:this.priorityUnloading&&p.unloading?priorityFitness(p.evaluation,p.unloading,weights):loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
   }
 }
 /** 동기 테스트·실험에서 세대 생성기를 끝까지 진행한다. */
@@ -158,17 +170,16 @@ export function finishGeneration(engine:Engine):Generation { const iter=engine.n
 import { Engine } from './engine';
 import { Random,type Box,type Truck,type Settings,type Weights } from '../domain/model';
 import { pack } from '../domain/packing';
-import { simulateLoading,loadingFitness } from '../simulation/loading';
 export interface ExperimentRow { condition:string;seed:number;gaScore:number;randomScore:number;gaMoves:number;randomMoves:number;gaMass:number;randomMass:number;gaLoaded:number;randomLoaded:number;gaVolume:number;randomVolume:number;budget:number;randomEvaluations:number;validRatio:number }
 /** 동일 후보 평가 예산·상자 목록으로 3개 seed와 계획서의 9개 조건을 비교한다. */
-export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,weights:Weights,cancel:()=>boolean,progress:(s:string)=>void):Promise<ExperimentRow[]> {
+export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,weights:Weights,cancel:()=>boolean,progress:(s:string)=>void,priorityUnloading=false):Promise<ExperimentRow[]> {
   const result:ExperimentRow[]=[];
   const conditions=[...[0,.6,.9].map(c=>({name:`교차 ${c}`,patch:{crossover:c}})),...[2,3,5].map(k=>({name:`선택 k=${k}`,patch:{tournament:k}})),...[0,.05,.2].map(m=>({name:`변이 ${m}`,patch:{mutation:m}}))];
   for(const c of conditions)for(const seed of [11,29,47]) {
     if(cancel())return result;
     progress(`${c.name} · seed ${seed}`);
     const e=new Engine(boxes,truck,{...settings,crossover:.9,mutation:.05,tournament:3,...c.patch,seed},weights);
-    e.requireFullAllocation=true;
+    e.requireFullAllocation=true;e.priorityUnloading=priorityUnloading;
     let attempts=0,accepted=0;
     for(let g=0;g<settings.generations;g++) {
       const iter=e.next();let step=iter.next(),chunk=performance.now();
@@ -176,17 +187,18 @@ export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,w
       attempts+=step.value.attempts;accepted+=step.value.accepted;
     }
     const ga=e.population.reduce((a,b)=>a.score>=b.score?a:b),rng=new Random(seed);
+    const compare=new Engine(boxes,truck,settings,weights);compare.requireFullAllocation=true;compare.priorityUnloading=priorityUnloading;
     let best:{score:number;moves:number;mass:number;loaded:number;volume:number}|null=null,used=0,tries=0;
     while(used<e.evaluations) {
       if(cancel())return result;
       if(++tries>e.evaluations*120)throw Error('무작위 비교군의 유효 배치 생성 한도 초과');
       const p=pack(boxes,truck,rng,undefined,{},true);if(!p)continue;
-      const ev=simulateLoading(boxes,p.coords,truck,rng.shuffle(boxes.map(b=>b.id)),{},false);used++;
-      if(ev.valid&&ev.loaded===boxes.length) {const score=loadingFitness(ev,weights);if(!best||score>best.score)best={score,moves:ev.moves,mass:ev.mass,loaded:ev.loaded,volume:ev.loadedVolume};}
+      const individual=compare.evaluate(p.coords,[],'무작위 비교',p.repaired,rng.shuffle(boxes.map(b=>b.id)));used++;
+      if(individual){const ev=individual.evaluation,cost=individual.unloading??ev,score=individual.score;if(!best||score>best.score)best={score,moves:cost.moves,mass:cost.mass,loaded:ev.loaded,volume:ev.loadedVolume};}
       if(used%10===0)await new Promise(r=>setTimeout(r,0));
     }
     if(!best)throw Error('무작위 비교군에서 유효 상차 해답이 없습니다.');
-    result.push({condition:c.name,seed,gaScore:ga.score,randomScore:best.score,gaMoves:ga.evaluation.moves,randomMoves:best.moves,gaMass:ga.evaluation.mass,randomMass:best.mass,gaLoaded:ga.evaluation.loaded,randomLoaded:best.loaded,gaVolume:ga.evaluation.loadedVolume,randomVolume:best.volume,budget:e.evaluations,randomEvaluations:used,validRatio:accepted/attempts});
+    result.push({condition:c.name,seed,gaScore:ga.score,randomScore:best.score,gaMoves:(ga.unloading??ga.evaluation).moves,randomMoves:best.moves,gaMass:(ga.unloading??ga.evaluation).mass,randomMass:best.mass,gaLoaded:ga.evaluation.loaded,randomLoaded:best.loaded,gaVolume:ga.evaluation.loadedVolume,randomVolume:best.volume,budget:e.evaluations,randomEvaluations:used,validRatio:accepted/attempts});
     await new Promise(r=>setTimeout(r,0));
   }
   return result;
@@ -204,7 +216,7 @@ import { Engine } from '../ga/engine';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
 import {AutomaticSupply} from '../simulation/supply';
-export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number;requireFullAllocation?:boolean}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
+export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number;requireFullAllocation?:boolean;priorityUnloading?:boolean}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;priorityUnloading?:boolean};
 let engine:Engine|null=null,run=0,paused=false,stopped=false,iterator:Generator<void,Generation,void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
 let lastProgressAt=0;
 let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
@@ -232,7 +244,7 @@ function tick() {
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
-              next.requireFullAllocation=engine.requireFullAllocation;
+              next.requireFullAllocation=engine.requireFullAllocation;next.priorityUnloading=engine.priorityUnloading;
               next.seedLayout=expanded.map((_,i)=>best.evaluation.finalCoords[i]??[-1,-1,-1]);next.version=engine.version;engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
@@ -254,11 +266,11 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
   try {
     if(c.type==='start') {
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
-      engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);engine.requireFullAllocation=!!c.requireFullAllocation;lastProgressAt=0;iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
+      engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);engine.requireFullAllocation=!!c.requireFullAllocation;engine.priorityUnloading=!!c.priorityUnloading;lastProgressAt=0;iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
       supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
       run=c.run;stopped=false;
-      const result=await runExperiments(c.boxes,c.truck,c.settings,c.weights,()=>stopped,(progress)=>send('experimentProgress',{progress}));
+      const result=await runExperiments(c.boxes,c.truck,c.settings,c.weights,()=>stopped,(progress)=>send('experimentProgress',{progress}),!!c.priorityUnloading);
       if(!stopped)send('experiments',{result});
     } else if(c.run===run) {
       if(c.type==='pause') {paused=true;send('state',{state:'일시정지'});}
@@ -360,9 +372,9 @@ if(!Number.isInteger(generationCount)||generationCount<1||generationCount>300)th
 const configs=process.argv.includes('--large')?[100,220].map(count=>({count,inputSeed:2026,truck:DEFAULT_TRUCK,...DEFAULT_SETTINGS,weights:DEFAULT_WEIGHTS})):[{count:35,inputSeed:731,truck:{width:180,depth:400,height:180},population:24,seed:913,crossover:.7,mutation:.2,tournament:4,weights:{base:135,moves:4,mass:.5,space:35}},{count:48,inputSeed:416,truck:{width:240,depth:600,height:240},population:6,seed:51,crossover:1,mutation:.1,tournament:5,weights:{base:60,moves:0,mass:0,space:75}}];
 /** 같은 seed의 세대 전체(시간 제외)를 해시하여 성능 비교 시 결과 변경을 구분한다. */
 const reports=[];
-for(const c of configs){const e=new Engine(generateBoxes(c.count,c.inputSeed),c.truck,{...DEFAULT_SETTINGS,...c,generations:generationCount},c.weights);e.requireFullAllocation=true;const times=[],hashes=[],attempts=[],loadedRanges:number[][]=[],bestScores:number[]=[];
+for(const c of configs){const e=new Engine(generateBoxes(c.count,c.inputSeed),c.truck,{...DEFAULT_SETTINGS,...c,generations:generationCount},c.weights);e.requireFullAllocation=true;e.priorityUnloading=process.argv.includes('--priority');const times=[],hashes=[],attempts=[],loadedRanges:number[][]=[],bestScores:number[]=[];
  for(let i=0;i<generationCount;i++){const g=finishGeneration(e);times.push(g.elapsed);attempts.push(g.attempts);loadedRanges.push([Math.min(...g.individuals.map(p=>p.evaluation.loaded)),Math.max(...g.individuals.map(p=>p.evaluation.loaded))]);bestScores.push(g.best);hashes.push(createHash('sha256').update(JSON.stringify({...g,elapsed:0})).digest('hex'));}
- const report={configuration:{...c,generations:generationCount},count:c.count,ms:times.map(n=>Math.round(n)),total:Math.round(times.reduce((a,b)=>a+b,0)),hashes,attempts,loadedRanges,bestScores};reports.push(report);console.log(JSON.stringify(report));}
+ const report={objective:e.priorityUnloading?'priority-unload':'loading-compat',configuration:{...c,generations:generationCount},count:c.count,ms:times.map(n=>Math.round(n)),total:Math.round(times.reduce((a,b)=>a+b,0)),hashes,attempts,loadedRanges,bestScores};reports.push(report);console.log(JSON.stringify(report));}
 console.log(JSON.stringify({note:'ms는 현재 환경의 계산 시간이며 브라우저 표시 시간과 다를 수 있습니다.',reports},null,2));
 ```
 
@@ -370,3 +382,13 @@ console.log(JSON.stringify({note:'ms는 현재 환경의 계산 시간이며 브
 ## 2026-11-17 01:01:28 (KST) 100개·220개 정체 추가 최적화
 
 목적/점수/물리제약/전체할당/완료시다운로드유지.기존정체초기집단에구획복구,필요조건빠른거부,상자사이협력실행을추가했다.52개검사·빌드·기본각100세대계측/브라우저확인.동작변화와설정·시간·한계: `Info/plan/2026-11-17/004153_100개220개대규모입력추가최적화_plan.md`.위실제코드전체갱신.
+
+
+## 2026-11-17 01:37:10 (KST) 상자별 우선도 실평가 연결
+
+입력/우선순하차/GA점수/재생/내보내기연동.66개검사·빌드통과.작동순서·함수별역할·정책변경·단위·제약·검증은 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md`.위전체소스는현재구현이다.
+
+
+## 2026-11-17 01:51:14 (KST) 최종 확인
+
+67개 검사와 타입검사·빌드 통과. 공개 브라우저 6개 우선도 수정/배송순서/PNG·ZIP, 100·220개 집단50·3세대와 일시정지·재개 확인. Pages 성공. 상세 조건·시간·가정·증거는 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md` 최종 기록. 현재 전체 소스 스냅샷 동기화 완료.

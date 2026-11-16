@@ -123,3 +123,8 @@
 - 문서: `Info/소프트웨어/결과내보내기/SW_Browser_ResultExport_001/SW_Browser_ResultExport_001.md`.
 - 관련ID: SW_Browser_EvolutionView_001, SW_Browser_Scene_001, SW_Browser_Evolution_001.
 - 상태:41개검사·빌드통과,최종브라우저상태는 `Info/plan/2026-11-17/001050_완료시점결과이미지다운로드_plan.md`.
+
+
+## 2026-11-17 01:37:10 (KST) 현재 우선도 하차 목표
+
+현재웹은전량상차가능성통과후상자별높은우선도순하차비용을최적화한다.동점ID순.관련기능ID는기존Packing/Unloading/Evolution/EvolutionView/Scene/ResultExport를재사용.사용자승인/함수/검증/정책/한계는 `Info/plan/2026-11-17/011248_상자별우선도하차최적화연결_plan.md`.기존상차복원기록은과거시점기록이다.
