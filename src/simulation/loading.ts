@@ -1,6 +1,14 @@
 import type {Box,Vec,Truck,Weights,LoadingEvaluation,MoveEvent} from '../domain/model';
 import {type Placed,validateLayout,fits,blockers,supported} from '../domain/packing';
 
+/** 전체 적재의 필요조건만 빠르게 검사한다. 통과해도 실제 경로·재배치 평가는 생략하지 않는다. */
+export function completeSupportOrder(boxes:Box[],coords:Vec[],order:number[],fixed:Record<number,Vec>={}):boolean {
+  if(coords.length!==boxes.length||coords.some(p=>!p||p[0]<0))return false;
+  const targets=new Map(boxes.map((box,i)=>[box.id,{box,pos:coords[i]}])),placed=boxes.flatMap((box,i)=>fixed[box.id]?[{box,pos:coords[i]}]:[]);
+  for(const id of order){if(fixed[id])continue;const target=targets.get(id);if(!target||!supported(target,placed))return false;placed.push(target);}
+  return true;
+}
+
 /** 상차 순서와 목표 위치를 실행한다. 처음 싣는 동작과 재배치를 구별한다. SW_Browser_Loading_001 */
 export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:number[],fixed:Record<number,Vec>={},trace=true):LoadingEvaluation {
   const result:LoadingEvaluation={valid:true,reason:'',moves:0,mass:0,loaded:0,loadedVolume:0,totalVolume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0),coverage:0,utilization:0,compactness:0,unloadedIds:[],events:[],finalCoords:boxes.map(()=>[-1,-1,-1])};

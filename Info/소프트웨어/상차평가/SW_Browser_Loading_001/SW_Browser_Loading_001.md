@@ -40,6 +40,14 @@ Engine.evaluate, 비교 실험, App의 재생이 호출한다. loadingFitness는
 import type {Box,Vec,Truck,Weights,LoadingEvaluation,MoveEvent} from '../domain/model';
 import {type Placed,validateLayout,fits,blockers,supported} from '../domain/packing';
 
+/** 전체 적재의 필요조건만 빠르게 검사한다. 통과해도 실제 경로·재배치 평가는 생략하지 않는다. */
+export function completeSupportOrder(boxes:Box[],coords:Vec[],order:number[],fixed:Record<number,Vec>={}):boolean {
+  if(coords.length!==boxes.length||coords.some(p=>!p||p[0]<0))return false;
+  const targets=new Map(boxes.map((box,i)=>[box.id,{box,pos:coords[i]}])),placed=boxes.flatMap((box,i)=>fixed[box.id]?[{box,pos:coords[i]}]:[]);
+  for(const id of order){if(fixed[id])continue;const target=targets.get(id);if(!target||!supported(target,placed))return false;placed.push(target);}
+  return true;
+}
+
 /** 상차 순서와 목표 위치를 실행한다. 처음 싣는 동작과 재배치를 구별한다. SW_Browser_Loading_001 */
 export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:number[],fixed:Record<number,Vec>={},trace=true):LoadingEvaluation {
   const result:LoadingEvaluation={valid:true,reason:'',moves:0,mass:0,loaded:0,loadedVolume:0,totalVolume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0),coverage:0,utilization:0,compactness:0,unloadedIds:[],events:[],finalCoords:boxes.map(()=>[-1,-1,-1])};
@@ -198,3 +206,8 @@ export function simulateAccumulatedLoading(boxes:Box[],coords:Vec[],truck:Truck,
 ## 2026-11-16 23:16:42 (KST) 전체 할당 조건 추가
 
 현재 웹·비교 실험은 할당된 상자를 전부 실제 적재한 개체로만 세대를 구성한다. 유효 집단이 완성되기 전에는 세대를 올리지 않는다. 짐칸100% 조건과 다르며 상차 목적·기존 재이동 정의는 유지한다.30개 테스트·빌드 및 기본20개/3세대 전체 적재 확인. 상세 입력·복구·진행률·실패·호환 경로·재이동 정의: `Info/plan/2026-11-16/231642_할당상자전부배치세대조건과재이동정의_plan.md`.
+
+
+## 2026-11-17 01:01:28 (KST) 100개·220개 정체 추가 최적화
+
+목적/점수/물리제약/전체할당/완료시다운로드유지.기존정체초기집단에구획복구,필요조건빠른거부,상자사이협력실행을추가했다.52개검사·빌드·기본각100세대계측/브라우저확인.동작변화와설정·시간·한계: `Info/plan/2026-11-17/004153_100개220개대규모입력추가최적화_plan.md`.위실제코드전체갱신.

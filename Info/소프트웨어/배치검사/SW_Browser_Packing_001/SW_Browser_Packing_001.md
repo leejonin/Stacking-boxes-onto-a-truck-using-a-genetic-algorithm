@@ -185,7 +185,7 @@ export function randomPosition(box: Box, placed: Placed[], truck: Truck, rng: Ra
   return null;
 }
 /** 좌표 유전자를 우선 배치하고 무효 부분만 재배치한다. 고정 상자는 보존한다. */
-export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[], fixed: Record<number,Vec> = {}, allowPartial=false, compact=false): {coords:Vec[];repaired:boolean} | null {
+export function* packSteps(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[], fixed: Record<number,Vec> = {}, allowPartial=false, compact=false,requireComplete=false):Generator<void,{coords:Vec[];repaired:boolean;loadOrder?:number[]}|null,void> {
   const placed:Placed[]=[], coords:Vec[]=new Array(boxes.length); let repaired=false;
   const fixedIndices=boxes.map((_,i)=>i).filter(i=>fixed[boxes[i].id]);
   for(const i of fixedIndices) { coords[i]=[...fixed[boxes[i].id]];placed.push({box:boxes[i],pos:coords[i]}); }
@@ -196,10 +196,14 @@ export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[],
   for(const i of indices) {
     const wish=preferred?.[i]; let pos:Vec|null=wish&&fits(boxes[i],wish,placed,truck)?[...wish]:null;
     if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng,false,compact);if(wish) repaired=true;}
-    if(!pos) {if(allowPartial){coords[i]=[-1,-1,-1];repaired=true;continue;}return null;}
-    coords[i]=pos;placed.push({box:boxes[i],pos});
+    if(!pos) {if(allowPartial){coords[i]=[-1,-1,-1];repaired=true;if(requireComplete)return {coords:boxes.map((_,j)=>coords[j]??[-1,-1,-1]),repaired};yield;continue;}return null;}
+    coords[i]=pos;placed.push({box:boxes[i],pos});yield;
   }
   return {coords,repaired};
+}
+/** 동기 호출은 동일 생성기를 끝까지 실행한다. Worker는 상자 사이에 메시지를 처리한다. */
+export function pack(boxes:Box[],truck:Truck,rng:Random,preferred?:Vec[],fixed:Record<number,Vec>={},allowPartial=false,compact=false):{coords:Vec[];repaired:boolean;loadOrder?:number[]}|null {
+  const it=packSteps(boxes,truck,rng,preferred,fixed,allowPartial,compact);let result=it.next();while(!result.done)result=it.next();return result.value;
 }
 /** 기존 적재물을 움직이지 않고 입구에서 넣을 수 있는 상차 순서를 구한다. */
 export function loadingOrder(boxes: Box[], coords: Vec[], truck: Truck, fixed: Record<number,Vec> = {}): number[] | null {
@@ -212,6 +216,26 @@ export function loadingOrder(boxes: Box[], coords: Vec[], truck: Truck, fixed: R
     const [p]=waiting.splice(i,1);placed.push(p);order.push(p.box.id);
   }
   return order;
+}
+
+/** 초기 완전 집단 생성이 정체되면 긴 상자부터 지지면이 보장된 빈 구획에 배치한다.
+ * 구획은 서로 겹치지 않으며 위 구획은 바로 아래 상자의 밑면 안에 있다.
+ * 뒤쪽 끝→높이 순서는 받침과 입구 경로를 함께 만족한다. 평가기로 다시 검증한다. */
+export function partitionPack(boxes:Box[],truck:Truck,rng:Random,preferred?:Vec[]):{coords:Vec[];repaired:boolean;loadOrder:number[]} {
+  const spaces=[{x:0,y:0,z:0,w:truck.width,d:truck.depth,h:truck.height}],coords:Vec[]=boxes.map(()=>[-1,-1,-1]);
+  const indices=boxes.map((b,i)=>({i,key:Math.max(...b.size)*1000000+b.size[0]*b.size[1]*b.size[2]*(.8+rng.next()*.4)+(preferred?Math.max(0,preferred[i][1])*100+Math.max(0,preferred[i][2])*10+Math.max(0,preferred[i][0]):0)})).sort((a,b)=>b.key-a.key);
+  for(const {i} of indices){
+    const [w,d,h]=boxes[i].size;let chosen=-1;
+    for(let j=0;j<spaces.length;j++){
+      const s=spaces[j];if(w>s.w||d>s.d||h>s.h)continue;
+      const previous=spaces[chosen];if(chosen<0||s.w*s.d*s.h<previous.w*previous.d*previous.h||s.w*s.d*s.h===previous.w*previous.d*previous.h&&s.y+s.d>previous.y+previous.d)chosen=j;
+    }
+    if(chosen<0)continue;
+    const [s]=spaces.splice(chosen,1),y=s.y+s.d-d;coords[i]=[s.x,y,s.z];
+    spaces.push(...[{x:s.x,y:s.y,z:s.z,w:s.w,d:s.d-d,h:s.h},{x:s.x+w,y,z:s.z,w:s.w-w,d,h:s.h},{x:s.x,y,z:s.z+h,w,d,h:s.h-h}].filter(s=>s.w>0&&s.d>0&&s.h>0));
+  }
+  const loadOrder=boxes.map((b,i)=>({id:b.id,back:coords[i][1]+b.size[1],z:coords[i][2]})).sort((a,b)=>b.back-a.back||a.z-b.z).map(b=>b.id);
+  return {coords,repaired:true,loadOrder};
 }
 ```
 
@@ -287,3 +311,8 @@ generateBoxes의 120개 상한을 제거하고 양의 정수만 검사한다. 24
 ## 2026-11-17 00:33:48 (KST) 동작 보존 성능 최적화
 
 계획`Info/plan/2026-11-17/002502_시뮬레이션계산과3D성능최적화_plan.md`.위소스스냅샷갱신.44개검사·빌드·실제브라우저3세대/카메라/재생/완료PNG검증통과.기준선대비동작해시6개일치.수치·설정·한계는계획참조.
+
+
+## 2026-11-17 01:01:28 (KST) 100개·220개 정체 추가 최적화
+
+목적/점수/물리제약/전체할당/완료시다운로드유지.기존정체초기집단에구획복구,필요조건빠른거부,상자사이협력실행을추가했다.52개검사·빌드·기본각100세대계측/브라우저확인.동작변화와설정·시간·한계: `Info/plan/2026-11-17/004153_100개220개대규모입력추가최적화_plan.md`.위실제코드전체갱신.

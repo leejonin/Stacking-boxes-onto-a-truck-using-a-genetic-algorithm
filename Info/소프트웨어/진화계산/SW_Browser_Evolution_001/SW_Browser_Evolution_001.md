@@ -38,13 +38,14 @@ Worker start/pause/resume/stop/weights는 실행 ID로 분리된다. 약 12ms �
 
 ```tsx
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
-import { pack,randomPosition,loadingOrder } from '../domain/packing';
-import { simulateLoading,loadingFitness } from '../simulation/loading';
+import { pack,packSteps,randomPosition,loadingOrder,partitionPack,validateLayout } from '../domain/packing';
+import { simulateLoading,loadingFitness,completeSupportOrder } from '../simulation/loading';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
 export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
+  private partitionMode=false;
   seedLayout:Vec[]|undefined;
   requireFullAllocation=false;
   allocationProgress={ready:0,attempts:0,mostLoaded:0};
@@ -58,12 +59,14 @@ export class Engine {
     return best;
   }
   /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
-  offspring(): {coords:Vec[];loadOrder:number[];parents:string[];operation:string;repaired:boolean}|null {
+  offspring(): {coords:Vec[];loadOrder:number[];repairOrder?:number[];parents:string[];operation:string;repaired:boolean}|null {
     const a=this.select(),b=this.select();const cross=this.rng.next()<this.settings.crossover && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
       if(this.fixed[this.boxes[i].id] || this.rng.next()>=this.settings.mutation)continue;
+      // 구획 복구 모드에서는 좌표 유전자를 변이한 뒤 공통 복구기로 충돌·지지를 보장한다.
+      if(this.partitionMode){const size=this.boxes[i].size;coords[i]=[this.rng.int(0,this.truck.width-size[0]),this.rng.int(0,this.truck.depth-size[1]),this.rng.int(0,this.truck.height-size[2])];mutated=true;continue;}
       // 위 지지 관계까지 고정하는 대신 변이 후 pack에서 후속 검사를 수행한다.
       const placed=this.boxes.flatMap((box,j)=>j===i||coords[j][0]<0?[]:[{box,pos:coords[j]}]);
       const p=randomPosition(this.boxes[i],placed,this.truck,this.rng);
@@ -77,13 +80,15 @@ export class Engine {
     const prefix=a.loadOrder.slice(0,cut);
     const loadOrder=cross?[...prefix,...b.loadOrder.filter(id=>!prefix.includes(id))]:[...a.loadOrder];
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
-    const result=pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
+    // 유효한 복제·교차 좌표는 그대로 보존한다. 복구가 필요한 자식만 다시 구획화한다.
+    const result=this.partitionMode?(validateLayout(this.boxes,coords,this.truck)?partitionPack(this.boxes,this.truck,this.rng,coords):{coords,repaired:false,loadOrder:this.boxes.map((b,i)=>({id:b.id,back:coords[i][1]+b.size[1],z:coords[i][2]})).sort((a,b)=>b.back-a.back||a.z-b.z).map(b=>b.id)}):pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
     if(!result)return null;
-    return {...result,loadOrder,parents:cross?[a.id,b.id]:[a.id],operation:cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제')};
+    return {...result,loadOrder,...(this.partitionMode?{repairOrder:result.loadOrder}:{}),parents:cross?[a.id,b.id]:[a.id],operation:(cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제'))+(this.partitionMode&&result.repaired?'·구획 복구':'')};
   }
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
+    if(this.requireFullAllocation&&!completeSupportOrder(this.boxes,coords,loadOrder,this.fixed))return null;
     const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
     if(!evaluation.valid)return null;
     this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
@@ -92,7 +97,7 @@ export class Engine {
   }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
-    const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0;
+    const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=false;
     this.allocationProgress={ready:0,attempts:0,mostLoaded:0};
     if(this.requireFullAllocation){
       if(this.boxes.some(b=>b.size.some((v,i)=>v>[this.truck.width,this.truck.depth,this.truck.height][i])))throw Error('할당 상자 중 짐칸 치수를 넘는 상자가 있어 전부 배치할 수 없습니다. 초기화 후 입력을 조정하세요.');
@@ -108,12 +113,17 @@ export class Engine {
       if(++attempts>this.settings.population*120) throw Error(`할당 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
       this.allocationProgress.attempts=attempts;
       const child=this.population.length?this.offspring():null;
-      const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation);
+      // 최초 시도가 실패해 완전 후보가 하나도 없을 때만 초기화 전략을 전환한다.
+      // 기존 초기 집단이 바로 생성되는 입력은 후보·난수 순서를 그대로 유지한다.
+      rescueInitial ||= !this.population.length&&this.requireFullAllocation&&attempts>1&&!next.length&&!Object.keys(this.fixed).length;
+      const rescue=rescueInitial;
+      if(rescue)this.partitionMode=true;
+      const candidate=this.population.length?child:rescue?partitionPack(this.boxes,this.truck,this.rng):(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
       if(candidate) {
-        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
         if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
-          const order=loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
+          const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
           if(order)p=this.evaluate(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
         }
         if(p) {next.push(p);accepted++;this.allocationProgress.ready=next.length;}
@@ -344,12 +354,19 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 
 ```tsx
 import {createHash} from 'node:crypto';
-import {Engine,finishGeneration} from '../src/ga/engine';import {generateBoxes,DEFAULT_SETTINGS} from '../src/domain/model';
-const configs=[{count:35,inputSeed:731,truck:{width:180,depth:400,height:180},population:24,seed:913,crossover:.7,mutation:.2,tournament:4,weights:{base:135,moves:4,mass:.5,space:35}},{count:48,inputSeed:416,truck:{width:240,depth:600,height:240},population:6,seed:51,crossover:1,mutation:.1,tournament:5,weights:{base:60,moves:0,mass:0,space:75}}];
+import {Engine,finishGeneration} from '../src/ga/engine';import {generateBoxes,DEFAULT_SETTINGS,DEFAULT_TRUCK,DEFAULT_WEIGHTS} from '../src/domain/model';
+const generationCount=Number(process.argv.find(v=>v.startsWith('--generations='))?.split('=')[1]??3);
+if(!Number.isInteger(generationCount)||generationCount<1||generationCount>300)throw Error('세대 수는 1–300 정수여야 합니다.');
+const configs=process.argv.includes('--large')?[100,220].map(count=>({count,inputSeed:2026,truck:DEFAULT_TRUCK,...DEFAULT_SETTINGS,weights:DEFAULT_WEIGHTS})):[{count:35,inputSeed:731,truck:{width:180,depth:400,height:180},population:24,seed:913,crossover:.7,mutation:.2,tournament:4,weights:{base:135,moves:4,mass:.5,space:35}},{count:48,inputSeed:416,truck:{width:240,depth:600,height:240},population:6,seed:51,crossover:1,mutation:.1,tournament:5,weights:{base:60,moves:0,mass:0,space:75}}];
 /** 같은 seed의 세대 전체(시간 제외)를 해시하여 성능 비교 시 결과 변경을 구분한다. */
 const reports=[];
-for(const c of configs){const e=new Engine(generateBoxes(c.count,c.inputSeed),c.truck,{...DEFAULT_SETTINGS,...c},c.weights);e.requireFullAllocation=true;const times=[],hashes=[],attempts=[];
- for(let i=0;i<3;i++){const g=finishGeneration(e);times.push(g.elapsed);attempts.push(g.attempts);hashes.push(createHash('sha256').update(JSON.stringify({...g,elapsed:0})).digest('hex'));}
- const report={configuration:c,count:c.count,ms:times.map(n=>Math.round(n)),total:Math.round(times.reduce((a,b)=>a+b,0)),hashes,attempts};reports.push(report);console.log(JSON.stringify(report));}
+for(const c of configs){const e=new Engine(generateBoxes(c.count,c.inputSeed),c.truck,{...DEFAULT_SETTINGS,...c,generations:generationCount},c.weights);e.requireFullAllocation=true;const times=[],hashes=[],attempts=[],loadedRanges:number[][]=[],bestScores:number[]=[];
+ for(let i=0;i<generationCount;i++){const g=finishGeneration(e);times.push(g.elapsed);attempts.push(g.attempts);loadedRanges.push([Math.min(...g.individuals.map(p=>p.evaluation.loaded)),Math.max(...g.individuals.map(p=>p.evaluation.loaded))]);bestScores.push(g.best);hashes.push(createHash('sha256').update(JSON.stringify({...g,elapsed:0})).digest('hex'));}
+ const report={configuration:{...c,generations:generationCount},count:c.count,ms:times.map(n=>Math.round(n)),total:Math.round(times.reduce((a,b)=>a+b,0)),hashes,attempts,loadedRanges,bestScores};reports.push(report);console.log(JSON.stringify(report));}
 console.log(JSON.stringify({note:'ms는 현재 환경의 계산 시간이며 브라우저 표시 시간과 다를 수 있습니다.',reports},null,2));
 ```
+
+
+## 2026-11-17 01:01:28 (KST) 100개·220개 정체 추가 최적화
+
+목적/점수/물리제약/전체할당/완료시다운로드유지.기존정체초기집단에구획복구,필요조건빠른거부,상자사이협력실행을추가했다.52개검사·빌드·기본각100세대계측/브라우저확인.동작변화와설정·시간·한계: `Info/plan/2026-11-17/004153_100개220개대규모입력추가최적화_plan.md`.위실제코드전체갱신.
