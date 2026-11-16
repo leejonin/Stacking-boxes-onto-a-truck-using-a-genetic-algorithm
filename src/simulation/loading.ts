@@ -62,7 +62,7 @@ export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:numbe
   if(loaded.length){const min=Math.min(...loaded.map(p=>p.pos[1])),max=Math.max(...loaded.map(p=>p.pos[1]+p.box.size[1]));result.compactness=result.loadedVolume/(truck.width*truck.height*(max-min));}
   return result;
 }
-/** 적재 개수·부피 보상과 공간 집중도 보상에서 상차 재배치 비용을 뺀다. */
-export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'moves'|'mass'>,w:Weights):number {
-  return e.valid?Math.round((w.base*e.coverage+(w.space??20)*e.compactness-w.moves*e.moves-w.mass*e.mass)*100)/100:-Infinity;
+/** 적재 개수·부피·공간 집중도 및 짐칸 활용률 보상(기본 최대50점)에서 상차 재배치 비용을 뺀다. */
+export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'utilization'|'moves'|'mass'>,w:Weights):number {
+  return e.valid?Math.round((w.base*e.coverage+(w.space??20)*e.compactness+(w.fill??50)*e.utilization-w.moves*e.moves-w.mass*e.mass)*100)/100:-Infinity;
 }

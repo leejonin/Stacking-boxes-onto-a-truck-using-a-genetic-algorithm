@@ -90,16 +90,15 @@ test('실제 Worker는 미적재 입력이 남아도 짐칸이 꽉 차면 세대
  assert.equal(completed,true);assert.equal(lastGeneration,1);assert.equal(supplied,false);assert.equal(full.evaluation.utilization,1);assert.equal(full.evaluation.loaded,1);
 });
 
-test('실제 Worker는 한 개체에 추가 공간이 없으면 100% 미만이어도 즉시 완료한다',async()=>{
- const scope=globalThis as any;let full:any,completed=false;
+test('공간 소진은 세대 상차 완료이며 남은 부피가 있으면 다음 세대로 계속 진화한다',async()=>{
+ const scope=globalThis as any;let second:any,completed=false,notice=false;
  let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
- scope.postMessage=(m:any)=>{if(m.type==='capacity')full=m.individual;if(m.type==='state'&&m.state==='완료'){completed=true;finish();}if(m.type==='error'){finish();throw Error(m.message);}};
+ scope.postMessage=(m:any)=>{if(m.type==='generationCapacity')notice=true;if(m.type==='generation'&&m.generation.number===2){second=m.generation;scope.self.onmessage({data:{type:'stop',run:101}});finish();}if(m.type==='state'&&m.state==='완료'){completed=true;finish();}if(m.type==='error'){finish();throw Error(m.message);}};
  const {boxes}=initial();
  scope.self.onmessage({data:{type:'start',run:101,boxes:boxes.slice(0,2),truck:{width:25,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
  const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
- assert.equal(completed,true);assert.equal(full.generation,1);assert.equal(full.evaluation.utilization,.8);
+ assert.equal(completed,false);assert.equal(notice,true);assert.ok(second);assert.equal(second.capacityReached,true);assert.equal(Math.max(...second.individuals.map((p:any)=>p.evaluation.utilization)),.8);
 });
-
 
 test('완료 적재율 기본100%와 변경값의 이상 경계 및 입력 범위를 검사한다',()=>{
  const {boxes}=initial(),input=boxes.slice(0,1),truck={width:100,depth:20,height:20};

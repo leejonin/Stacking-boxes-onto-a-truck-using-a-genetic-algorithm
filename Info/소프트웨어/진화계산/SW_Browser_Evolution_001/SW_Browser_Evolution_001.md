@@ -234,10 +234,13 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
-        const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        const completeCandidates=supply?engine.population.filter(p=>loadingComplete(engine!.boxes,p,engine!.truck,completionPercent)):[];
+        // 공간 소진은 해당 세대의 상차 완료다. 전체 실행은 목표 부피 활용률(기본100%, 남은0%)에서만 완료한다.
+        const capacityReached=!!supply&&engine.population.some(p=>loadingComplete(engine!.boxes,p,engine!.truck,100));
+        const completeCandidates=supply?engine.population.filter(p=>p.evaluation.loadedVolume*100>=engine!.truck.width*engine!.truck.depth*engine!.truck.height*completionPercent):[];
         const filled=completeCandidates.length>0;
+        send('generation',{generation:{...g,capacityReached,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
+        if(capacityReached&&!filled)send('generationCapacity',{message:`${g.number+generationOffset}세대 상차 완료 · 추가 적재 공간 없음 · 다음 세대에서 재배치 탐색을 계속합니다.`});
+        const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
         if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
             const completed=filled?completeCandidates:engine.population.filter(p=>p.evaluation.loaded===engine!.boxes.length);
@@ -324,3 +327,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 서로 다른 상자는 전체 입력·추가 공급에서 고유 ID를 사용하고 같은 상자는 세대·재배치 후에도 ID를 유지한다. 앞선 한 배치라는 표현으로 요구를 한정하지 않는다. 기존 구현은 이 기준을 유지한다. 확인 근거·강화한 검사: `Info/plan/2026-11-16/200438_상자ID전체공급고유성기준확정_plan.md`.
 
 - 2026-11-16 20:05:01 (KST) 검증 완료: 공급 회귀 검사1개 통과.6회 추가 공급 전체66개 ID 유일성, 매 회차 이전 상자의 ID·데이터 보존, 신규 ID와 전체 기존 ID 비중복, seed재현성 확인. 실행 소스 변경 없음. 기존41개 전체 검사 결과를 새로 실행한 것으로 주장하지 않는다. 문서·검사 변경만 Public main에 반영한다.
+
+## 2026-11-16 20:16:09 (KST) 짐칸 활용률 보상과 세대 상차 완료
+
+기본 최대50점의 실제 짐칸 부피 활용률 보상과 입력·재적용을 추가했다. 추가 적재 공간 없음은 세대 상차 완료이며 다음 세대로 진화한다. 전체 완료는 설정 부피 목표(기본100%, 남은0%)에서 수행한다. 이전 공간 없음 즉시 전체 완료 동작은 이번 사용자 확정으로 대체한다.43개 테스트·빌드 성공. 자세한 입력·호출·검증·한계는 `Info/plan/2026-11-16/201609_짐칸활용률보상과세대상차완료_plan.md`.

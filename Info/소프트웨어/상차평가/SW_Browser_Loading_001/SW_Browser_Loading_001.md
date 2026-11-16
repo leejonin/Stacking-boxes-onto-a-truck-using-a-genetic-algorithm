@@ -99,9 +99,9 @@ export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:numbe
   if(loaded.length){const min=Math.min(...loaded.map(p=>p.pos[1])),max=Math.max(...loaded.map(p=>p.pos[1]+p.box.size[1]));result.compactness=result.loadedVolume/(truck.width*truck.height*(max-min));}
   return result;
 }
-/** 적재 개수·부피 보상과 공간 집중도 보상에서 상차 재배치 비용을 뺀다. */
-export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'moves'|'mass'>,w:Weights):number {
-  return e.valid?Math.round((w.base*e.coverage+(w.space??20)*e.compactness-w.moves*e.moves-w.mass*e.mass)*100)/100:-Infinity;
+/** 적재 개수·부피·공간 집중도 및 짐칸 활용률 보상(기본 최대50점)에서 상차 재배치 비용을 뺀다. */
+export function loadingFitness(e:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'utilization'|'moves'|'mass'>,w:Weights):number {
+  return e.valid?Math.round((w.base*e.coverage+(w.space??20)*e.compactness+(w.fill??50)*e.utilization-w.moves*e.moves-w.mass*e.mass)*100)/100:-Infinity;
 }
 ```
 
@@ -185,3 +185,7 @@ export function simulateAccumulatedLoading(boxes:Box[],coords:Vec[],truck:Truck,
 - 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
 
 - 2026-11-16 20:00:45 (KST) 3세대 정체 수정·ID 중복과 공간 겹침 금지: 기존 선호 좌표 우선, 실제 적재 상태에서 추가 상차 변이, 일부 자식 순서 유전자 복구, 최종 적재 검증을 적용했다.41개 테스트·빌드 성공. 실제 Worker3세대 최고점수 개체28개 적재. 상세: `Info/plan/2026-11-16/200045_3세대상차정체와중복겹침금지_plan.md`.
+
+## 2026-11-16 20:16:09 (KST) 짐칸 활용률 보상과 세대 상차 완료
+
+기본 최대50점의 실제 짐칸 부피 활용률 보상과 입력·재적용을 추가했다. 추가 적재 공간 없음은 세대 상차 완료이며 다음 세대로 진화한다. 전체 완료는 설정 부피 목표(기본100%, 남은0%)에서 수행한다. 이전 공간 없음 즉시 전체 완료 동작은 이번 사용자 확정으로 대체한다.43개 테스트·빌드 성공. 자세한 입력·호출·검증·한계는 `Info/plan/2026-11-16/201609_짐칸활용률보상과세대상차완료_plan.md`.

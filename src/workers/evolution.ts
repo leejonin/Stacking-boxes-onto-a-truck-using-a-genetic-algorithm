@@ -23,10 +23,13 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
-        const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        const completeCandidates=supply?engine.population.filter(p=>loadingComplete(engine!.boxes,p,engine!.truck,completionPercent)):[];
+        // 공간 소진은 해당 세대의 상차 완료다. 전체 실행은 목표 부피 활용률(기본100%, 남은0%)에서만 완료한다.
+        const capacityReached=!!supply&&engine.population.some(p=>loadingComplete(engine!.boxes,p,engine!.truck,100));
+        const completeCandidates=supply?engine.population.filter(p=>p.evaluation.loadedVolume*100>=engine!.truck.width*engine!.truck.depth*engine!.truck.height*completionPercent):[];
         const filled=completeCandidates.length>0;
+        send('generation',{generation:{...g,capacityReached,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
+        if(capacityReached&&!filled)send('generationCapacity',{message:`${g.number+generationOffset}세대 상차 완료 · 추가 적재 공간 없음 · 다음 세대에서 재배치 탐색을 계속합니다.`});
+        const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
         if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
             const completed=filled?completeCandidates:engine.population.filter(p=>p.evaluation.loaded===engine!.boxes.length);

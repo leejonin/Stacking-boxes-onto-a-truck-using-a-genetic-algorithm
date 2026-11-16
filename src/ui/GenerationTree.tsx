@@ -17,7 +17,7 @@ export function GenerationTree({history,selected,onSelect,follow,setFollow}:{his
           return g.individuals.flatMap((p,i)=>p.parents.map((id,k)=>{const j=indices.get(id);if(j===undefined)return null;const hot=p.id===selected||id===selected;return <path key={p.id+id+k} d={`M ${LEFT+i*CELL+34} ${row*ROW+83} C ${LEFT+i*CELL+34} ${row*ROW+112}, ${LEFT+j*CELL+34} ${row*ROW+112}, ${LEFT+j*CELL+34} ${(row+1)*ROW+32}`} stroke={hot?'#147957':'#d3dcd3'} strokeWidth={hot?2:1} opacity={hot?1:.45}/>;}));})}
       </svg>
       {reversed.slice(start,end).map((g,offset)=>{const row=start+offset;return <section className="generation-row" key={g.number} style={{top:row*ROW,width}} aria-label={`${g.number}세대`}>
-        <div className="generation-label"><b>{String(g.number).padStart(2,'0')}</b><span>세대</span><small>v{g.version}</small></div>
+        <div className="generation-label"><b>{String(g.number).padStart(2,'0')}</b><span>세대</span><small>{g.capacityReached?"상차 완료":`v${g.version}`}</small></div>
         <div className="individuals">{g.individuals.map((p,i)=><button key={p.id} className={`individual ${selected===p.id?'selected':''} ${p.score===g.best?'best':''}`} onClick={()=>onSelect(p)} title={`${p.id} · ${p.operation}${p.repaired?' · 배치 수정':''} · 부모 ${p.parents.join(', ')||'없음'}`} aria-label={`${g.number}세대 개체 ${i+1}, 점수 ${p.score}`}><span className="node-symbol">{p.operation==='엘리트'?'◆':'▥'}</span><b>{p.score.toFixed(1)}</b><small>#{i+1}{p.score===g.best?' · BEST':''}</small></button>)}</div>
       </section>;})}
     </div>}
