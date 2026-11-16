@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {cpSync,writeFileSync,mkdtempSync} from 'node:fs';
+import {cpSync,writeFileSync,mkdtempSync,readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -21,7 +21,7 @@ const existing=git(['ls-remote','--heads','origin','gh-pages'],target);
 if(existing){git(['fetch','origin','gh-pages'],target);git(['checkout','-B','gh-pages','FETCH_HEAD'],target);}
 cpSync(join(project,'dist'),target,{recursive:true});
 writeFileSync(join(target,'.nojekyll'),'');
-git(['add','--all'],target);
+git(['add','--',...readdirSync(target).filter(name=>name!=='.git')],target);
 if(git(['diff','--cached','--name-only'],target))git(['commit','-m',`GitHub Pages 배포 (${git(['rev-parse','--short','HEAD'])})`],target);
 console.log(git(['push','origin','gh-pages'],target));
 console.log('gh-pages 게시 완료');

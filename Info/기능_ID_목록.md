@@ -89,5 +89,5 @@
 - 관련 ID: 001, SW_Browser 기능 전체.
 - 코드 경로: `scripts/deploy-pages.mjs`, `.github/pages-actions-reference.yml`, `vite.config.ts`.
 - 문서: `Info/배포/정적웹배포/SV_GitHubActions_Deployment_001/SV_GitHubActions_Deployment_001.md`.
-- 상태: 준비·검증 완료, 원격 전송과 배포 최종 결과 확인 중.
+- 상태: 전체 소스 원격 push·Pages 배포 성공, 공개 페이지와 3D·Worker 정적 파일 HTTP 200 확인.
 - 이전 ID: 해당 없음.

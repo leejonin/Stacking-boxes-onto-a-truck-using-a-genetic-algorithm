@@ -20,3 +20,7 @@ https://github.com/leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorith
 상세 코드·입출력·실패 처리: 동일 ID 상세 문서. 자료·버전: Info/기술환경.md. 전송·CI·사이트 접속의 최종 결과는 확인 후 이 문서에 이어 기록한다. 준비 단계에서 추가로 확인된 미해결 문제 없음.
 
 전송 단계 추가 기록: 현재 CLI의 workflow 권한 부족으로 첫 push가 거부됐다. 프로젝트 권한 확대 없이 main 전체 소스와 gh-pages 정적 배포로 전환하며, Actions 파일은 .github/pages-actions-reference.yml로 참고 보존한다. 일반 브랜치 push만 사용하며 강제 push·이력 재작성은 하지 않는다.
+
+2026-11-16 19:11:46 (KST): main a008ead까지 프로젝트 전체 push 성공. gh-pages 78593c400d46c5d1ef6c20aae485b1fbd13b1efd 게시 성공. Pages를 legacy·gh-pages 루트로 바꿨고 최초 빌드 요청 queued 응답을 확인했다. 최초 인증 권한 제한은 브랜치 게시 방식으로 해결했다.
+
+2026-11-16 19:12:59 (KST) 완료 결과: gh-pages 78593c400d46c5d1ef6c20aae485b1fbd13b1efd에 대한 Pages built와 서버 실행 success 확인. 실행 https://github.com/leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/actions/runs/43846535948. https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/ HTTP 200, JS·CSS·Worker·원본 탑차 GLB·박스 GLB HTTP 200을 확인했다. 최초 workflow 권한 부족은 브랜치 배포로 해결했으며 남은 배포 차단 사항 없음. 이 결과 문서와 실제 사용한 배포 스크립트의 최종 경로 지정 변경도 main에 commit·push한다.
