@@ -18,9 +18,9 @@ export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck):Vec|n
 export class AutomaticSupply {
   round=1;private rng:Random;private nextId:number;
   constructor(public boxes:Box[],seed:number){this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;}
-  /** 물리적으로 더 실을 후보 공간이 있으면 입력을 확장한다. 8은 처리 묶음이며 총량 상한이 아니다. */
+  /** 최소 상자 부피도 남지 않은 경우만 종료한다. 현재 경로 막힘은 재배치 탐색으로 해결할 수 있다. */
   expand(best:Individual,truck:Truck):Box[]|null {
-    if(!availableLoadingSlot(this.boxes,best.evaluation.finalCoords,truck))return null;
+    if(truck.width*truck.depth*truck.height-best.evaluation.loadedVolume<1000)return null;
     const incoming=generateBoxes(8,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }

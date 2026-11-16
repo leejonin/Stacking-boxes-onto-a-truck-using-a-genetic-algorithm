@@ -2,7 +2,7 @@ import type {Box,Vec,Truck,Weights,LoadingEvaluation,MoveEvent} from '../domain/
 import {type Placed,validateLayout,fits,blockers,supported} from '../domain/packing';
 
 /** 상차 순서와 목표 위치를 실행한다. 처음 싣는 동작과 재배치를 구별한다. SW_Browser_Loading_001 */
-export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:number[],fixed:Record<number,Vec>={},trace=true):LoadingEvaluation {
+export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:number[],fixed:Record<number,Vec>={},trace=true,reference?:{count:number;volume:number}):LoadingEvaluation {
   const result:LoadingEvaluation={valid:true,reason:'',moves:0,mass:0,loaded:0,loadedVolume:0,totalVolume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0),coverage:0,utilization:0,compactness:0,unloadedIds:[],events:[],finalCoords:boxes.map(()=>[-1,-1,-1])};
   const fail=(reason:string)=>{result.valid=false;result.reason=reason;return result;};
   if(coords.length!==boxes.length||order.length!==boxes.length||new Set(order).size!==boxes.length||order.some(id=>!boxes.some(b=>b.id===id)))return fail('상차 순서에는 각 상자 ID가 정확히 한 번 필요합니다.');
@@ -56,7 +56,8 @@ export function simulateLoading(boxes:Box[],coords:Vec[],truck:Truck,order:numbe
   for(const p of loaded) {const i=boxes.findIndex(b=>b.id===p.box.id);result.finalCoords[i]=[...p.pos];result.loadedVolume+=p.box.size[0]*p.box.size[1]*p.box.size[2];}
   result.loaded=loaded.length;result.unloadedIds=boxes.filter(b=>!loaded.some(p=>p.box.id===b.id)).map(b=>b.id);
   // 개수와 부피를 함께 보상하므로 작은 상자만 골라 점수를 높이는 편향을 줄인다.
-  result.coverage=boxes.length?.5*(result.loaded/boxes.length+result.loadedVolume/result.totalVolume):0;
+  // 자동 공급은 최초 입력을 기준으로 고정하여 공급만으로 기존 배치의 점수가 하락하지 않는다.
+  result.coverage=boxes.length?.5*(result.loaded/(reference?.count??boxes.length)+result.loadedVolume/(reference?.volume??result.totalVolume)):0;
   result.utilization=result.loadedVolume/(truck.width*truck.depth*truck.height);
   if(loaded.length){const min=Math.min(...loaded.map(p=>p.pos[1])),max=Math.max(...loaded.map(p=>p.pos[1]+p.box.size[1]));result.compactness=result.loadedVolume/(truck.width*truck.height*(max-min));}
   return result;

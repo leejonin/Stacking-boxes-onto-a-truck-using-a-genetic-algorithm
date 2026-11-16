@@ -7,8 +7,21 @@ export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   seedLayout:Vec[]|undefined;
+  reference:{count:number;volume:number};
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
+    this.reference={count:boxes.length,volume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)};
+  }
+  /** 공급 전 집단의 좌표·상차 순서·부모 ID와 최초 점수 기준을 다음 회차에 계승한다. */
+  inherit(previous:Engine,prefix:string):void {
+    this.reference={...previous.reference};this.version=previous.version;
+    const added=this.boxes.slice(previous.boxes.length).map(b=>b.id);
+    this.population=previous.population.map(p=>{
+      const coords=this.boxes.map((_,i)=>[...(p.coords[i]??[-1,-1,-1])] as Vec);
+      const migrant=this.evaluate(coords,[],p.operation,p.repaired,[...p.loadOrder,...added]);
+      if(!migrant)throw Error('공급 전 집단을 계승하지 못했습니다.');
+      return {...migrant,id:prefix+p.id,generation:0};
+    });
   }
   /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
   select():Individual {
@@ -43,7 +56,7 @@ export class Engine {
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
-    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
+    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
     if(!evaluation.valid)return null;
     return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }

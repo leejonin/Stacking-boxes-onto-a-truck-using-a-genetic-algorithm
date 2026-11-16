@@ -9,7 +9,7 @@ let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
 /** 공급 회차마다 다른 입력·ID를 구별해 과거 개체와 계보를 보존한다. */
 function displayIndividuals(individuals:import('../domain/model').Individual[]) {
   const prefix=supply?`r${supply.round}-`:'';
-  return individuals.map(p=>({...p,id:prefix+p.id,parents:p.parents.map(id=>prefix+id),generation:p.generation+generationOffset}));
+  return individuals.map(p=>({...p,id:prefix+p.id,parents:p.parents.map(id=>id.startsWith('r')?id:prefix+id),generation:p.generation+generationOffset}));
 }
 /** Worker의 최신 실행만 알린다. 메시지마다 실행 ID를 포함한다. */
 function send(type:string,data:object={}) {postMessage({type,run,...data});}
@@ -26,14 +26,14 @@ function tick() {
         send('generation',{generation:{...g,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
         if(engine.generation>=engine.settings.generations) {
           if(supply){
-            const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),expanded=supply.expand(best,engine.truck);
+            const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
-              next.seedLayout=expanded.map((_,i)=>best.evaluation.finalCoords[i]??[-1,-1,-1]);next.version=engine.version;engine=next;
+              next.inherit(engine,`r${previousRound}-`);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'현재 배치에서 최소 규격 상자를 넣을 추가 공간·상차 경로를 찾지 못했습니다.'});
+            send('capacity',{message:'남은 적재 부피가 최소 생성 상자(10×10×10cm)보다 작습니다.'});
           }
           paused=true;send('state',{state:'완료'});return;
         }

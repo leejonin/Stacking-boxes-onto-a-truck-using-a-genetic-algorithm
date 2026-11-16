@@ -91,14 +91,13 @@ export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck):Vec|n
 export class AutomaticSupply {
   round=1;private rng:Random;private nextId:number;
   constructor(public boxes:Box[],seed:number){this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;}
-  /** 물리적으로 더 실을 후보 공간이 있으면 입력을 확장한다. 8은 처리 묶음이며 총량 상한이 아니다. */
+  /** 최소 상자 부피도 남지 않은 경우만 종료한다. 현재 경로 막힘은 재배치 탐색으로 해결할 수 있다. */
   expand(best:Individual,truck:Truck):Box[]|null {
-    if(!availableLoadingSlot(this.boxes,best.evaluation.finalCoords,truck))return null;
+    if(truck.width*truck.depth*truck.height-best.evaluation.loadedVolume<1000)return null;
     const incoming=generateBoxes(8,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }
 }
-
 ```
 
 ## 2026-11-16 13:13:21 (KST) — 총량제한없는자동공급
@@ -106,3 +105,6 @@ export class AutomaticSupply {
 AutomaticSupply가 첫 입력 소진 후에도 처리 묶음별 새 상자를 계속 생성한다. availableLoadingSlot은 실제 경계·지지·입구 경로를 검사하며 임의 총 공급 개수로 종료하지 않는다. 기존 수동 Arrival 모드와 별도로 작동한다.
 
 총량 상한은 두지 않으며 최초 18개·추가 8개는 처리 묶음이다. 테스트 23개와 빌드가 통과했다. 브라우저 직접 검증은 미확인이다.
+## 2026-11-16 19:23:49 (KST) 자동 공급 경계 수정
+
+현재 동작·검증은 `Info/plan/2026-11-16/192349_자동공급세대계승수정_plan.md` 및 같은 기능의 최신 day에 기록했다. 이전 검증 기록은 당시 결과이며 현재 코드 스냅샷은 위에 갱신했다.

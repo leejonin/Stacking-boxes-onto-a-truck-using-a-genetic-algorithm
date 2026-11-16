@@ -44,8 +44,21 @@ export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   seedLayout:Vec[]|undefined;
+  reference:{count:number;volume:number};
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
+    this.reference={count:boxes.length,volume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)};
+  }
+  /** 공급 전 집단의 좌표·상차 순서·부모 ID와 최초 점수 기준을 다음 회차에 계승한다. */
+  inherit(previous:Engine,prefix:string):void {
+    this.reference={...previous.reference};this.version=previous.version;
+    const added=this.boxes.slice(previous.boxes.length).map(b=>b.id);
+    this.population=previous.population.map(p=>{
+      const coords=this.boxes.map((_,i)=>[...(p.coords[i]??[-1,-1,-1])] as Vec);
+      const migrant=this.evaluate(coords,[],p.operation,p.repaired,[...p.loadOrder,...added]);
+      if(!migrant)throw Error('공급 전 집단을 계승하지 못했습니다.');
+      return {...migrant,id:prefix+p.id,generation:0};
+    });
   }
   /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
   select():Individual {
@@ -80,7 +93,7 @@ export class Engine {
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
-    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
+    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
     if(!evaluation.valid)return null;
     return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }
@@ -112,7 +125,6 @@ export class Engine {
 }
 /** 동기 테스트·실험에서 세대 생성기를 끝까지 진행한다. */
 export function finishGeneration(engine:Engine):Generation { const iter=engine.next();let r=iter.next();while(!r.done)r=iter.next();return r.value; }
-
 ```
 
 함수·구성요소 역할(실제 문서화 주석):
@@ -182,7 +194,7 @@ let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
 /** 공급 회차마다 다른 입력·ID를 구별해 과거 개체와 계보를 보존한다. */
 function displayIndividuals(individuals:import('../domain/model').Individual[]) {
   const prefix=supply?`r${supply.round}-`:'';
-  return individuals.map(p=>({...p,id:prefix+p.id,parents:p.parents.map(id=>prefix+id),generation:p.generation+generationOffset}));
+  return individuals.map(p=>({...p,id:prefix+p.id,parents:p.parents.map(id=>id.startsWith('r')?id:prefix+id),generation:p.generation+generationOffset}));
 }
 /** Worker의 최신 실행만 알린다. 메시지마다 실행 ID를 포함한다. */
 function send(type:string,data:object={}) {postMessage({type,run,...data});}
@@ -199,14 +211,14 @@ function tick() {
         send('generation',{generation:{...g,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
         if(engine.generation>=engine.settings.generations) {
           if(supply){
-            const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),expanded=supply.expand(best,engine.truck);
+            const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
-              next.seedLayout=expanded.map((_,i)=>best.evaluation.finalCoords[i]??[-1,-1,-1]);next.version=engine.version;engine=next;
+              next.inherit(engine,`r${previousRound}-`);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'현재 배치에서 최소 규격 상자를 넣을 추가 공간·상차 경로를 찾지 못했습니다.'});
+            send('capacity',{message:'남은 적재 부피가 최소 생성 상자(10×10×10cm)보다 작습니다.'});
           }
           paused=true;send('state',{state:'완료'});return;
         }
@@ -241,7 +253,6 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
     }
   }catch(e){send('error',{message:e instanceof Error?e.message:String(e)});}
 };
-
 ```
 
 함수·구성요소 역할(실제 문서화 주석):
@@ -256,3 +267,6 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 공급 회차의 세대 예산이 끝나면 새 상자를 생성해 다음 입력의 Engine을 자동 실행한다. 전체 세대 번호·평가 횟수는 누적하고 개체 ID와 부모 연결은 공급 회차 접두사로 구분한다. 이전 실제 배치 좌표를 새 초기 후보의 선호 좌표로 넘긴다.
 
 총량 상한은 두지 않으며 최초 18개·추가 8개는 처리 묶음이다. 테스트 23개와 빌드가 통과했다. 브라우저 직접 검증은 미확인이다.
+## 2026-11-16 19:23:49 (KST) 자동 공급 경계 수정
+
+현재 동작·검증은 `Info/plan/2026-11-16/192349_자동공급세대계승수정_plan.md` 및 같은 기능의 최신 day에 기록했다. 이전 검증 기록은 당시 결과이며 현재 코드 스냅샷은 위에 갱신했다.
