@@ -42,15 +42,15 @@ export type Vec = [number, number, number];
 export interface LoadingSnapshot {positions:Record<number,Vec>;moves:number;mass:number}
 export interface Box { id: number; size: Vec; weight: number; priority: number; grade: number }
 export interface Truck { width: number; depth: number; height: number }
-export interface Weights { base: number; moves: number; mass: number; space?: number; fill?:number }
+export interface Weights { base: number; moves: number; mass: number; space?: number; fill?:number; amount?:number; travelMass?:number }
 export interface Settings { population: number; generations: number; crossover: number; mutation: number; tournament: number; seed: number }
 export interface MoveEvent { kind: 'out' | 'return' | 'deliver' | 'load'; boxId: number; from: Vec | null; to: Vec | null; moves: number; mass: number }
 export interface Evaluation { valid: boolean; reason: string; moves: number; mass: number; delivered: number; events: MoveEvent[] }
 export interface LoadingEvaluation {valid:boolean;reason:string;moves:number;mass:number;loaded:number;loadedVolume:number;totalVolume:number;coverage:number;utilization:number;compactness:number;unloadedIds:number[];events:MoveEvent[];finalCoords:Vec[]}
-export interface Individual { id: string; generation: number; parents: string[]; operation: string; repaired: boolean; coords: Vec[]; loadOrder:number[]; evaluation: Omit<LoadingEvaluation, 'events'>; score: number; version: number }
+export interface Individual { id: string; generation: number; parents: string[]; operation: string; repaired: boolean; coords: Vec[]; loadOrder:number[]; evaluation: Omit<LoadingEvaluation, 'events'>; unloading?:Omit<Evaluation,'events'>; bearing?:StackLoadEvaluation; score: number; version: number }
 export interface Generation { number: number; localNumber?:number; capacityReached?:boolean; individuals: Individual[]; best: number; mean: number; version: number; attempts: number; accepted: number; evaluations: number; elapsed: number; boxes?:Box[];fixed?:Record<number,Vec>;round?:number; accumulated?:LoadingSnapshot }
 export const GRADES = [{name:'극소형', sum:80, mass:2}, {name:'소형', sum:100, mass:5}, {name:'중형', sum:120, mass:10}, {name:'대형', sum:140, mass:15}, {name:'특대형', sum:160, mass:20}];
-export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:20, fill:50 };
+export const DEFAULT_WEIGHTS: Weights = { base: 100, moves: 10, mass: 1, space:20, fill:50, amount:100, travelMass:1 };
 export const DEFAULT_SETTINGS: Settings = { population: 50, generations: 100, crossover: .9, mutation: .05, tournament: 3, seed: 2026 };
 export const DEFAULT_TRUCK: Truck = { width: 220, depth: 520, height: 220 };
 
@@ -90,8 +90,11 @@ export function validateConfig(boxes: Box[], truck: Truck, settings: Settings, w
   if ([truck.width,truck.depth,truck.height].some(n=>!Number.isInteger(n)||n<10||n>2000)) throw Error('적재함 치수는 10~2000cm 정수여야 합니다.');
   if (boxes.some(b=>gradeOf(b.size,b.weight)<0 || !Number.isFinite(b.priority) || b.priority<1 || b.priority>5)) throw Error('상자 규격 또는 우선도가 올바르지 않습니다.');
   if (!Number.isInteger(settings.population)||settings.population<2||settings.population>100 || !Number.isInteger(settings.generations)||settings.generations<1||settings.generations>300 || !Number.isInteger(settings.tournament)||settings.tournament<2||settings.tournament>settings.population || [settings.crossover,settings.mutation].some(n=>!Number.isFinite(n)||n<0||n>1) || !Number.isInteger(settings.seed) || settings.seed<0 || settings.seed>4294967295) throw Error('집단 2~100, 세대 1~300, k 2~집단 수, 교차·변이율 0~1, seed 범위를 확인하세요.');
-  if (Object.values(weights).some(n=>!Number.isFinite(n))||weights.base<0||weights.moves<0||weights.mass<0||(weights.space??0)<0||(weights.fill??50)<0) throw Error('가중치는 유한한 0 이상의 숫자여야 합니다.');
+  if (Object.values(weights).some(n=>!Number.isFinite(n))||weights.base<0||weights.moves<0||weights.mass<0||(weights.space??0)<0||(weights.fill??50)<0||(weights.amount??100)<0||(weights.travelMass??1)<0) throw Error('가중치는 유한한 0 이상의 숫자여야 합니다.');
 }
+
+/** 실제 적재 상태의 정적 상부 하중. kg 상당 하중이며 물질의 압축강도를 의미하지 않는다. */
+export interface StackLoadEvaluation {valid:boolean;reason:string;loads:{boxId:number;aboveMass:number;excessMass:number}[];excessMass:number}
 ```
 
 함수·구성요소 역할(실제 문서화 주석):
@@ -236,3 +239,9 @@ generateBoxes의 120개 상한을 제거하고 양의 정수만 검사한다. 24
 ## 2026-11-16 20:16:09 (KST) 짐칸 활용률 보상과 세대 상차 완료
 
 기본 최대50점의 실제 짐칸 부피 활용률 보상과 입력·재적용을 추가했다. 추가 적재 공간 없음은 세대 상차 완료이며 다음 세대로 진화한다. 전체 완료는 설정 부피 목표(기본100%, 남은0%)에서 수행한다. 이전 공간 없음 즉시 전체 완료 동작은 이번 사용자 확정으로 대체한다.43개 테스트·빌드 성공. 자세한 입력·호출·검증·한계는 `Info/plan/2026-11-16/201609_짐칸활용률보상과세대상차완료_plan.md`.
+
+## 2026-11-16 20:53:14 (KST) 현재 목적·입출력·호출·검증
+
+하차 우선순위는 고정하고 방해 상자의 이동 횟수와 이동 중량을 최소화하는 배치를 탐색한다. 상부 하중은 별도 안정성 항목이다. 소스 타입·함수 주석과 실제 분기가 입력·단위·반환값·예외의 기준이며 구현 코드 전체를 위에 보존했다. Engine.evaluate→실제 상차→simulateLoaded 및 evaluateStackLoad→unloadingFitness, Worker와 비교 실험에서 호출한다. App은 동일 하차 평가기를3D 재생에 사용한다. 실제 적재물만 하차하고 미적재는 별도 표시한다.
+
+총51개 검사·빌드 성공 및 소형27조건 비교 실험 예산 일치를 확인했다. 직접 브라우저 조작 미확인, 하중은 kg 상당의 사용자 정의 근사 규칙이다. 상세 계산·전후 변경·실측값·한계·관련기능은 `Info/plan/2026-11-16/205314_우선순위하차최적화와상부하중평가_plan.md`. 이전 상차 목적·하차 보류 기록은 당시 기록이며 이번 확정으로 대체한다.

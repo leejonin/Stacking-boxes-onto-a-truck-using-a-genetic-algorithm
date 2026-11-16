@@ -2,12 +2,15 @@ import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Se
 import { pack,randomPosition,loadingOrder } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
 import {simulateAccumulatedLoading} from '../simulation/accumulated';
+import {simulateLoaded,unloadingFitness} from '../simulation/unload';
+import {evaluateStackLoad} from '../simulation/stackLoad';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
 export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   seedLayout:Vec[]|undefined;
+  objective:'loading'|'unloading'='loading';
   reference:{count:number;volume:number};
   accumulated:LoadingSnapshot|undefined;
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
@@ -16,7 +19,7 @@ export class Engine {
   }
   /** 공급 전 집단의 좌표·상차 순서·부모 ID와 최초 점수 기준을 다음 회차에 계승한다. */
   inherit(previous:Engine,prefix:string,committed?:Individual):void {
-    this.reference={...previous.reference};this.version=previous.version;
+    this.reference={...previous.reference};this.version=previous.version;this.objective=previous.objective;
     if(committed)this.accumulated={positions:Object.fromEntries(previous.boxes.flatMap((b,i)=>committed.evaluation.finalCoords[i][0]>=0?[[b.id,[...committed.evaluation.finalCoords[i]] as Vec]]:[])),moves:committed.evaluation.moves,mass:committed.evaluation.mass};
     const added=this.boxes.slice(previous.boxes.length).map(b=>b.id);
     this.population=previous.population.flatMap(p=>{
@@ -77,12 +80,16 @@ export class Engine {
     }
     return {coords,loadOrder:[...parent.loadOrder.filter(id=>!added.includes(id)),...added],parents:[parent.id],operation:'추가 상차 변이',repaired:false};
   }
-  /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
+  /** 실제 적재 결과를 구하고 하차 모드에서는 우선순위 하차·상부 하중과 적재 보상으로 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
     const {events:_,...evaluation}=this.accumulated?simulateAccumulatedLoading(this.boxes,coords,this.truck,loadOrder,this.accumulated,this.fixed,false,this.reference):simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
     if(!evaluation.valid)return null;
-    return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
+    const u=this.objective==='unloading'?simulateLoaded(this.boxes,evaluation.finalCoords,this.truck,false):undefined;
+    const bearing=u?evaluateStackLoad(this.boxes,evaluation.finalCoords,this.truck):undefined;
+    if(u&&!u.valid||bearing&&!bearing.valid)return null;
+    const unloading=u?{valid:u.valid,reason:u.reason,moves:u.moves,mass:u.mass,delivered:u.delivered}:undefined;
+    return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,unloading,bearing,score:unloading&&bearing?unloadingFitness(unloading,evaluation,bearing,this.weights):loadingFitness(evaluation,this.weights),version:this.version};
   }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
@@ -109,7 +116,7 @@ export class Engine {
   /** 현재 집단만 새 가중치로 평가한다. 이전 세대 스냅샷은 수정하지 않는다. */
   reweight(weights:Weights):Individual[] {
     validateConfig(this.boxes,this.truck,this.settings,weights);this.weights={...weights};this.version++;
-    this.population=this.population.map(p=>({...p,score:loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
+    this.population=this.population.map(p=>({...p,score:p.unloading&&p.bearing?unloadingFitness(p.unloading,p.evaluation,p.bearing,weights):loadingFitness(p.evaluation,weights),version:this.version}));return this.population;
   }
 }
 /** 동기 테스트·실험에서 세대 생성기를 끝까지 진행한다. */

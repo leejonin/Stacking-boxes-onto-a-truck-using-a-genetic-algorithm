@@ -125,11 +125,21 @@ test('기본 Worker는3세대의 공급2회차에서 기존20개를 보존하며
  const scope=globalThis as any;let third:any,error='';let finish!:()=>void;
  const done=new Promise<void>(resolve=>{finish=resolve;});
  scope.postMessage=(m:any)=>{if(m.type==='generation'&&m.generation.number===3){third=m.generation;scope.self.onmessage({data:{type:'stop',run:103}});finish();}if(m.type==='error'){error=m.message;finish();}};
- scope.self.onmessage({data:{type:'start',run:103,boxes:generateBoxes(20,2026),truck:DEFAULT_TRUCK,settings:DEFAULT_SETTINGS,weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026,completionPercent:100}});
+ scope.self.onmessage({data:{type:'start',run:103,boxes:generateBoxes(20,2026),truck:DEFAULT_TRUCK,settings:DEFAULT_SETTINGS,weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026,completionPercent:100,objective:'loading'}});
  const timeout=setTimeout(()=>{scope.self.onmessage({data:{type:'stop',run:103}});finish();},60000);await done;clearTimeout(timeout);
  assert.equal(error,'');assert.ok(third);assert.equal(third.round,2);assert.equal(third.boxes.length,40);assert.equal(new Set(third.boxes.map((b:any)=>b.id)).size,40);
  const best=third.individuals.reduce((a:any,b:any)=>a.score>=b.score?a:b);
  assert.ok(best.evaluation.loaded>20);assert.ok(third.individuals.some((p:any)=>p.operation==='추가 상차 변이'));
  for(const p of third.individuals){const indices=third.boxes.map((_:any,i:number)=>i).filter((i:number)=>p.evaluation.finalCoords[i][0]>=0);assert.equal(validateLayout(indices.map((i:number)=>third.boxes[i]),indices.map((i:number)=>p.evaluation.finalCoords[i]),DEFAULT_TRUCK),null);}
  for(const p of third.individuals)for(const id of Object.keys(third.accumulated.positions)){const i=third.boxes.findIndex((b:any)=>b.id===+id);assert.ok(p.evaluation.finalCoords[i][0]>=0);}
+});
+
+
+test('기본 Worker는 하차 우선순위와 상부 하중 평가 원자료를 전달한다',async()=>{
+ const scope=globalThis as any;let generation:any,error='';let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='generation'){generation=m.generation;scope.self.onmessage({data:{type:'stop',run:104}});finish();}if(m.type==='error'){error=m.message;finish();}};
+ const {boxes}=initial();const input=boxes.slice(0,2).map((b,i)=>({...b,priority:i?5:1}));
+ scope.self.onmessage({data:{type:'start',run:104,boxes:input,truck:{width:40,depth:60,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
+ const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);assert.equal(error,'');assert.ok(generation);
+ for(const p of generation.individuals){assert.ok(p.unloading.valid);assert.equal(p.unloading.delivered,p.evaluation.loaded);assert.ok(p.bearing.valid);assert.equal(p.bearing.loads.length,p.evaluation.loaded);}
 });

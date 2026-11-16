@@ -91,3 +91,21 @@
 - 문서: `Info/배포/정적웹배포/SV_GitHubActions_Deployment_001/SV_GitHubActions_Deployment_001.md`.
 - 상태: 전체 소스 원격 push·Pages 배포 성공, 공개 페이지와 3D·Worker 정적 파일 HTTP 200 확인.
 - 이전 ID: 해당 없음.
+
+## SW_Browser_Unloading_001 — 하차평가
+
+- 영역/실행환경: SW/Browser.
+- 분류: 소프트웨어/하차평가.
+- 책임: 고정 우선순위 하차·재이동 횟수/중량 및 적재 보상 점수.
+- 문서: `Info/소프트웨어/하차평가/SW_Browser_Unloading_001/SW_Browser_Unloading_001.md`.
+- 관련 ID: SW_Browser_Evolution_001, SW_Browser_Packing_001, SW_Browser_EvolutionView_001.
+- 상태: 코드·수치·빌드 검증. 직접 브라우저 조작 미확인.
+
+## SW_Browser_StackLoad_001 — 하중평가
+
+- 영역/실행환경: SW/Browser.
+- 분류: 소프트웨어/하중평가.
+- 책임: 정적 상부 하중 전달·면적별 분담·자기 무게 초과분 계산.
+- 문서: `Info/소프트웨어/하중평가/SW_Browser_StackLoad_001/SW_Browser_StackLoad_001.md`.
+- 관련 ID: SW_Browser_Evolution_001, SW_Browser_Packing_001, SW_Browser_EvolutionView_001.
+- 상태: 코드·수치·빌드 검증. 직접 브라우저 조작 미확인.

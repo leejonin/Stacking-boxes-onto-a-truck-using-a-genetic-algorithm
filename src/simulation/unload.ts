@@ -1,4 +1,4 @@
-import { type Box,type Vec,type Truck,type Evaluation,type MoveEvent,type Weights } from '../domain/model';
+import { type Box,type Vec,type Truck,type Evaluation,type MoveEvent,type Weights,type LoadingEvaluation,type StackLoadEvaluation } from '../domain/model';
 import { type Placed,validateLayout,blockers,supported,candidates,fits } from '../domain/packing';
 /** 우선순위대로 실제 방해 상자를 임시 이동·복귀시키며 하차 비용을 계산한다. SW_Browser_Unloading_001 */
 export function simulate(boxes: Box[], coords: Vec[], truck: Truck, trace = true): Evaluation {
@@ -49,3 +49,14 @@ export function simulate(boxes: Box[], coords: Vec[], truck: Truck, trace = true
 }
 /** PPT 기준 100 - 10×횟수 - 1×중량. 무효 배치는 선택할 수 없다. */
 export function fitness(e: Pick<Evaluation,'valid'|'moves'|'mass'>, weights:Weights):number { return e.valid?Math.round((weights.base-weights.moves*e.moves-weights.mass*e.mass)*100)/100:-Infinity; }
+
+/** 실제 실린 상자만 높은 우선순위부터 하차한다. 미적재 sentinel은 하차 대상에서 제외한다. */
+export function simulateLoaded(boxes:Box[],coords:Vec[],truck:Truck,trace=true):Evaluation {
+  if(coords.length!==boxes.length||coords.some(p=>!p||p.length!==3||p.some(x=>!Number.isFinite(x))||p.some(x=>x<0)&&!p.every(x=>x===-1)))return {valid:false,reason:'실제 적재 좌표가 올바르지 않습니다.',moves:0,mass:0,delivered:0,events:[]};
+  const indices=boxes.map((_,i)=>i).filter(i=>coords[i][0]>=0);
+  return simulate(indices.map(i=>boxes[i]),indices.map(i=>coords[i]),truck,trace);
+}
+/** 고정 우선순위 하차의 재이동 횟수·이동 중량과 별도의 상부 하중을 감점하고 적재량·활용률을 보상한다. */
+export function unloadingFitness(e:Pick<Evaluation,'valid'|'moves'|'mass'>,loading:Pick<LoadingEvaluation,'valid'|'coverage'|'compactness'|'utilization'>,bearing:Pick<StackLoadEvaluation,'valid'|'excessMass'>,w:Weights):number {
+  return e.valid&&loading.valid&&bearing.valid?Math.round((w.base+(w.amount??100)*loading.coverage+(w.space??20)*loading.compactness+(w.fill??50)*loading.utilization-w.moves*e.moves-(w.travelMass??1)*e.mass-w.mass*bearing.excessMass)*100)/100:-Infinity;
+}
