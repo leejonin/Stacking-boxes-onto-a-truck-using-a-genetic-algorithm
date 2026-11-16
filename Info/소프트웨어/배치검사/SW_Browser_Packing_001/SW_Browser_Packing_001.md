@@ -392,3 +392,73 @@ export function freeRegions(placed:Placed[],truck:Truck):Region[]{let regions:Re
 공개 배포: gh-pages5a26e2605da61d619af417fcfd990f2dc928d5b7, Pages Actions43913323612 success. UI index-DBxvyf4a.js, Worker evolution-BRu2GaIS.js. 공개 브라우저에서도1000→400 경고·보정과 에셋 표시를 확인했다. 콘솔 오류/경고0. 실제 화면 증거 docs/images/input-limit-warning.jpg 및 docs/images/input-400.jpg. 로컬 임시 테스트 로그는 artifacts/input-limit에 보관(공개 대상 제외).
 
 상세 계획·승인·환경·함수 및 검사 기록: `Info/plan/2026-11-17/015406_입력반영과누적400제한_plan.md`. 위 전체 코드는 현재 구현이다.
+
+
+### `src/domain/supportPacking.ts`
+
+```ts
+import {Random,type Box,type Truck,type Vec} from './model';
+import {interval} from './packing';
+/** 평평한 지지면의 최대 빈 사각형을 유지한다. 후보 영역은 겹칠 수 있지만 실제 상자는 겹치지 않는다.
+ * 점유 영역을 네 방향으로 빼고 포함된 후보만 제거하므로 L자 빈 공간의 두 배치 가능성을 보존한다.
+ * 상자 윗면만 새 지지면으로 추가하며 고정 배치가 없는 전량 복구에서 사용한다. */
+export function supportSurfacePack(boxes:Box[],truck:Truck,rng:Random,mode=0){
+ type Surface={x:number;y:number;z:number;w:number;d:number};let spaces:Surface[]=[{x:0,y:0,z:0,w:truck.width,d:truck.depth}];const coords:Vec[]=boxes.map(()=>[-1,-1,-1]),order:number[]=[];
+ const sorted=boxes.map((b,i)=>({i,key:[b.size[0]*b.size[1],b.size[0]*b.size[1]*b.size[2],b.size[1],b.size[0]][mode%4]*(.98+rng.next()*.04)})).sort((a,b)=>b.key-a.key);
+ for(const {i} of sorted){const [w,d,h]=boxes[i].size;let best=Infinity,chosen=-1;
+  for(let j=0;j<spaces.length;j++){const s=spaces[j];if(w>s.w||d>s.d||s.z+h>truck.height)continue;
+   const score=mode<4?Math.min(s.w-w,s.d-d)*1e8+Math.max(s.w-w,s.d-d)*1e4+s.z:mode<8?s.w*s.d-w*d+s.z*.01:s.z*1e9+s.w*s.d;
+   if(score<best){best=score;chosen=j;}}
+  if(chosen<0)continue;const slot=spaces[chosen],x=slot.x,y=slot.y+slot.d-d,z=slot.z;coords[i]=[x,y,z];order.push(boxes[i].id);
+  const next:Surface[]=[];
+  for(const s of spaces){const left=Math.max(s.x,x),right=Math.min(s.x+s.w,x+w),front=Math.max(s.y,y),back=Math.min(s.y+s.d,y+d);
+   if(s.z>=z+h||left>=right||front>=back){next.push(s);continue;}
+   if(left>s.x)next.push({...s,w:left-s.x});if(right<s.x+s.w)next.push({...s,x:right,w:s.x+s.w-right});if(front>s.y)next.push({...s,d:front-s.y});if(back<s.y+s.d)next.push({...s,y:back,d:s.y+s.d-back});
+  }
+  if(z+h<truck.height)next.push({x,y,z:z+h,w,d});
+  spaces=next.filter((a,j)=>!next.some((b,k)=>j!==k&&a.z===b.z&&b.x<=a.x&&b.y<=a.y&&b.x+b.w>=a.x+a.w&&b.y+b.d>=a.y+a.d&&(k<j||b.w*b.d>a.w*a.d)));
+ }
+ return {coords,repaired:true,loadOrder:dependencyLoadingOrder(boxes,coords)??order};
+}
+
+/** 받침은 먼저, 입구를 막을 상자는 나중에 싣는 의존 그래프를 위상 정렬한다.
+ * 순환이면 이 모델의 무재이동 상차 순서를 만들 수 없으므로 null을 반환한다. 경계/지지는 평가기가 재검사한다. */
+export function dependencyLoadingOrder(boxes:Box[],coords:Vec[]):number[]|null {
+ const n=boxes.length;if(coords.length!==n||coords.some(p=>p[0]<0))return null;
+ const incoming=new Int32Array(n),next:number[][]=Array.from({length:n},()=>[]);
+ for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+  if(i===j)continue;const a=coords[i],b=coords[j],as=boxes[i].size,bs=boxes[j].size;
+  const supports=a[2]+as[2]===b[2]&&interval(a[0],as[0],b[0],bs[0])&&interval(a[1],as[1],b[1],bs[1]);
+  const blocks=b[1]<a[1]&&interval(a[0],as[0],b[0],bs[0])&&interval(a[2],as[2],b[2],bs[2]);
+  if(supports||blocks){next[i].push(j);incoming[j]++;}
+ }
+ const available=boxes.map((_,i)=>i).filter(i=>!incoming[i]),order:number[]=[];
+ while(available.length){available.sort((a,b)=>coords[a][1]-coords[b][1]||boxes[b].id-boxes[a].id);const i=available.pop()!;order.push(boxes[i].id);for(const j of next[i])if(!--incoming[j])available.push(j);}
+ return order.length===n?order:null;
+}
+```
+
+
+## 2026-11-17 02:27:16 KST 기본짐칸 전량 후보 생성 복구
+
+원인인 고정 구획 분절을 보완하는 supportSurfacePack을 추가했다. 기존 partitionPack이 전량 후보를 만들면 그대로 사용한다. 부분 후보이면 새 웹의 우선순 하차 모드에서만 추가 전략을 실행한다. 실패 감점5점/입력창은 사용자가 철회했으므로 구현하지 않았고 점수식·가중치는 그대로다.
+
+새 전략은 각 지지면의 비어 있는 최대 사각형 후보를 겹치는 형태로 보관한다. 실제 상자를 놓으면 점유 영역을 네 방향으로 빼고 같은 높이에서 다른 후보에 포함된 사각형을 제거한다. 서로 겹치는 후보는 선택 가능 영역 표현이며 실제 상자 중복 배치가 아니다. 상자 윗면만 새 지지면으로 추가하고 상한 높이를 검사하므로 하부 전체 지지를 유지한다. footprint 면적 순서에 작은 seed 난수를 적용하고 짧은 잔여 변 우선/잔여 면적 우선 두 선택법을 번갈아 시도한다.
+
+dependencyLoadingOrder는 지지하는 아래 상자→윗상자, 안쪽 상자→그 경로를 막을 앞 상자의 간선을 만들어 위상 정렬한다. 순환이면 null이다. 좌표가 있어도 상차 순서를 잘못 정하면 적재 실패가 생기므로 단순 생성 순서 대신 이 순서를 평가기에 전달한다. 경계/겹침/지지/전체 할당과 실제 상차·우선도 하차는 기존 평가기가 다시 검사한다. 입력 상자의 크기·방향·ID·우선도를 바꾸지 않는다.
+
+Engine.rescuePack은 기존 후보와 새 후보의 배치 개수를 비교해 더 많이 놓인 후보를 반환한다. 유효 개체를 완성하기 전 추가 전략은 최대32회이며 성공하면 카운터를 초기화한다. 해결 불가이면 실제 수용 불가를 확정하지 않는 안내와 함께 현재 세대를 유지한다. 완료하지 못한 후보의 배치 개수도 진행 상황에 표시하며 미완성 집단은 세대 승인하지 않는다. 고정 좌표가 있는 경로는 기존 생성기로 보존한다.
+
+자동 공급 다음 회차의 seedLayout은 예전 조밀한 좌표 뒤에서 새 위치를 전수 탐색하다 오래 걸릴 수 있었다. 우선도 하차 모드·고정 좌표 없음·이전 입력 좌표가 있는 새 Engine은 처음부터 복구 전략을 사용한다. 기존 상자의 ID/우선도는 공급기가 보존하고 좌표 재배치는 허용한다. 상자 누적1~400과 공급 규칙은 그대로다. 기존 legacy 상차 API에서는 새 복구/순서 확장 분기를 실행하지 않아35/48개 전체 세대 해시도 유지했다.
+
+검사: 총82개 통과/실패0, 약58.9초(여러 파일 병렬 실행). production 타입검사/빌드 통과, 기존500kB 번들 경고 유지. 기본짐칸220×520×220, 입력/GAseed2026, 집단50, 2세대에서256/360/400개 모두 모든50개체의 실제 적재/배송 개수·최종 배치 유효성·원래 점수식·엘리트 최고점 비감소를 확인했다. 새 후보8조건(seed11/731/913/2026×두전략)의 배치된 상자 부분집합도 경계/겹침/지지 검사를 통과했다. 높이10의100×100평면에60×60상자2개처럼 부피만으로는 거르지 못하는 불가능 입력은 부분 후보를 승인하지 않고 제한된 복구 뒤 원인을 알렸다.
+
+실제 Worker의 세대별 elapsed(ms):256개4454/3952,360개10398/10230,400개14012/13776. 테스트 병렬 실행 환경의 측정이며 브라우저 일정 속도 보장이 아니다. 최고점은256개-178817.9→-171223.7,360개-352030.6 유지,400개-450776.38 유지. 매 세대 점수 개선을 보장하지 않는다. 기존6000회/0개체 오류가 난 기본 조건과 같은 짐칸으로 재검증했다. 더 큰 짐칸의 기존100/256/360/400 비기본 가중치 검사도 통과했다.
+
+중간 회귀에서390→400 자동 공급 검사가30초 안에 끝나지 않는 문제가 드러나 이전 seedLayout 전수 탐색을 위의 직접 복구 경로로 수정했다. 단독 실제 Worker 검사 약2.4초에 완료했고 최종 전체 검사도 통과했다. 초기에 구 하차 호환 경로까지 새 순서 복구가 적용되어35/48 해시가 바뀐 것은 priorityUnloading 조건으로 적용 범위를 제한해 해결했다. 원래 성공 경로·기존 하차 trace 해시 검사는 모두 유지됐다.
+
+로컬 브라우저는 최종 코드 새로고침 후 기본짐칸·집단50·256개/2세대,400개/2세대를 각각 실행해 완료를 확인했다. 미적재0,우선순하차400개,선택개체적재400개가 표시되고 alert/콘솔error·warn0이었다. 자동 공급400개도 한도 안내 후2세대 완료했다. 실제 증거는 docs/images/default-truck-400-fixed.jpg. 장면 밖의 기존 택배 팔레트 소품은 실제 배치 좌표/상자 개수에 포함하지 않는다.
+
+한계: 이 수정은 일반3D포장 최적해/모든 seed 입력의 성공을 보장하지 않는다. 물리적으로 불가능하거나 유한 탐색에서 전량 집단을 못 찾으면 세대를 올리지 않는다. 실패 후보를 점수 감점으로 받아들이거나 상자 크기를 줄이거나 겹침을 허용하지 않는다. 별도 실패 감점 요청은 철회되어 관련 상태·점수·입력 필드를 추가하지 않았다.
+
+승인/목표/환경·작동/검증·한계는 `Info/plan/2026-11-17/021302_기본짐칸전량후보생성수정_plan.md`. 위 전체 소스는 현재 코드다.

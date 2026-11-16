@@ -1,3 +1,4 @@
+import {supportSurfacePack,dependencyLoadingOrder} from '../domain/supportPacking';
 import {priorityOrder} from '../domain/priority';
 import {simulateSteps} from '../simulation/unload';
 import {priorityFitness} from '../simulation/objective';
@@ -10,6 +11,7 @@ export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   private partitionMode=false;
+  private diverseFailures=0;
   seedLayout:Vec[]|undefined;
   requireFullAllocation=false;
   priorityUnloading=false;
@@ -46,9 +48,18 @@ export class Engine {
     const loadOrder=cross?[...prefix,...b.loadOrder.filter(id=>!prefix.includes(id))]:[...a.loadOrder];
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
     // 유효한 복제·교차 좌표는 그대로 보존한다. 복구가 필요한 자식만 다시 구획화한다.
-    const result=this.partitionMode?(validateLayout(this.boxes,coords,this.truck)?partitionPack(this.boxes,this.truck,this.rng,coords):{coords,repaired:false,loadOrder:this.boxes.map((b,i)=>({id:b.id,back:coords[i][1]+b.size[1],z:coords[i][2]})).sort((a,b)=>b.back-a.back||a.z-b.z).map(b=>b.id)}):pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
+    const result=this.partitionMode?(validateLayout(this.boxes,coords,this.truck)?this.rescuePack(coords):{coords,repaired:false,loadOrder:this.boxes.map((b,i)=>({id:b.id,back:coords[i][1]+b.size[1],z:coords[i][2]})).sort((a,b)=>b.back-a.back||a.z-b.z).map(b=>b.id)}):pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
     if(!result)return null;
     return {...result,loadOrder,...(this.partitionMode?{repairOrder:result.loadOrder}:{}),parents:cross?[a.id,b.id]:[a.id],operation:(cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제'))+(this.partitionMode&&result.repaired?'·구획 복구':'')};
+  }
+  /** 기존 구획 후보가 부분 배치이면 최대 지지면 전략으로 복구한다. 성공 경로의 난수·후보는 보존한다. */
+  private rescuePack(preferred?:Vec[]):ReturnType<typeof partitionPack> {
+    const original=partitionPack(this.boxes,this.truck,this.rng,preferred);
+    if(!this.priorityUnloading||original.coords.every(p=>p[0]>=0))return original;
+    // 새 전략도 성공을 보장하지 않는다. 같은 실패에 수천 번 비싼 재계산을 하지 않는다.
+    if(++this.diverseFailures>32)throw Error('다양한 전량 배치 전략으로 유효 집단을 생성하지 못했습니다. 전량 배치 가능성이 확인된 것은 아닙니다. 입력·짐칸·seed를 확인하세요. 현재 세대는 유지됩니다.');
+    const alternative=supportSurfacePack(this.boxes,this.truck,this.rng,this.diverseFailures%2?0:4);
+    if(alternative.coords.filter(p=>p[0]>=0).length>original.coords.filter(p=>p[0]>=0).length){return alternative;}return original;
   }
   /** 전량 상차를 검증한 뒤 웹 목적에서는 고정 우선도 순 하차 비용으로 평가한다. */
   *evaluateSteps(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Generator<void,Individual|null,void> {
@@ -67,7 +78,7 @@ export class Engine {
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {const it=this.evaluateSteps(coords,parents,operation,repaired,loadOrder);let r=it.next();while(!r.done)r=it.next();return r.value;}
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
-    const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=false;
+    const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=this.priorityUnloading&&!!this.seedLayout&&!this.population.length&&!Object.keys(this.fixed).length;
     this.allocationProgress={ready:0,attempts:0,mostLoaded:0};
     if(this.requireFullAllocation){
       if(this.boxes.some(b=>b.size.some((v,i)=>v>[this.truck.width,this.truck.depth,this.truck.height][i])))throw Error('할당 상자 중 짐칸 치수를 넘는 상자가 있어 전부 배치할 수 없습니다. 초기화 후 입력을 조정하세요.');
@@ -88,15 +99,16 @@ export class Engine {
       rescueInitial ||= !this.population.length&&this.requireFullAllocation&&attempts>1&&!next.length&&!Object.keys(this.fixed).length;
       const rescue=rescueInitial;
       if(rescue)this.partitionMode=true;
-      const candidate=this.population.length?child:rescue?partitionPack(this.boxes,this.truck,this.rng):(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
+      const candidate=this.population.length?child:rescue?this.rescuePack():(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
       if(candidate) {
+        this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,candidate.coords.filter(p=>p[0]>=0).length);
         let p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
         if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
-          const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
+          const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed)??(this.priorityUnloading&&!Object.keys(this.fixed).length?dependencyLoadingOrder(this.boxes,candidate.coords):null);
           if(order)p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
         }
-        if(p) {next.push(p);accepted++;this.allocationProgress.ready=next.length;}
+        if(p) {this.diverseFailures=0;next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }
