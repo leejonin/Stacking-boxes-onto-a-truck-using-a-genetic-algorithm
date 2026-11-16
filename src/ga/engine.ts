@@ -1,5 +1,5 @@
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
-import { pack,randomPosition } from '../domain/packing';
+import { pack,randomPosition,loadingOrder } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
@@ -7,6 +7,8 @@ export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   seedLayout:Vec[]|undefined;
+  requireFullAllocation=false;
+  allocationProgress={ready:0,attempts:0,mostLoaded:0};
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
   }
@@ -45,22 +47,37 @@ export class Engine {
     this.evaluations++;
     const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
     if(!evaluation.valid)return null;
+    this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
+    if(this.requireFullAllocation&&evaluation.loaded!==this.boxes.length)return null;
     return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
     const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0;
-    if(this.population.length) {
-      const best=this.population.reduce((a,b)=>a.score>=b.score?a:b);
+    this.allocationProgress={ready:0,attempts:0,mostLoaded:0};
+    if(this.requireFullAllocation){
+      if(this.boxes.some(b=>b.size.some((v,i)=>v>[this.truck.width,this.truck.depth,this.truck.height][i])))throw Error('할당 상자 중 짐칸 치수를 넘는 상자가 있어 전부 배치할 수 없습니다. 초기화 후 입력을 조정하세요.');
+      if(this.boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)>this.truck.width*this.truck.depth*this.truck.height)throw Error('할당 상자의 총부피가 짐칸보다 큽니다. 다음 세대로 넘어가지 않습니다. 초기화 후 할당 개수를 줄이세요.');
+    }
+    const eligible=this.requireFullAllocation?this.population.filter(p=>p.evaluation.loaded===this.boxes.length):this.population;
+    if(eligible.length) {
+      const best=eligible.reduce((a,b)=>a.score>=b.score?a:b);
       next.push({...best,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[best.id],operation:'엘리트',coords:best.coords.map(p=>[...p] as Vec)});
+      this.allocationProgress.ready=next.length;this.allocationProgress.mostLoaded=best.evaluation.loaded;
     }
     while(next.length<this.settings.population) {
-      if(++attempts>this.settings.population*120) throw Error(`유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 상자 수·적재함·고정 배치를 확인하세요.`);
+      if(++attempts>this.settings.population*120) throw Error(`할당 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
+      this.allocationProgress.attempts=attempts;
       const child=this.population.length?this.offspring():null;
       const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true);
       if(candidate) {
-        const p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
-        if(p) {next.push(p);accepted++;}
+        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
+        if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
+          const order=loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
+          if(order)p=this.evaluate(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
+        }
+        if(p) {next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }

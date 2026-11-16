@@ -11,6 +11,7 @@ export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,w
     if(cancel())return result;
     progress(`${c.name} · seed ${seed}`);
     const e=new Engine(boxes,truck,{...settings,crossover:.9,mutation:.05,tournament:3,...c.patch,seed},weights);
+    e.requireFullAllocation=true;
     let attempts=0,accepted=0;
     for(let g=0;g<settings.generations;g++) {
       const iter=e.next();let step=iter.next(),chunk=performance.now();
@@ -24,7 +25,7 @@ export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,w
       if(++tries>e.evaluations*120)throw Error('무작위 비교군의 유효 배치 생성 한도 초과');
       const p=pack(boxes,truck,rng,undefined,{},true);if(!p)continue;
       const ev=simulateLoading(boxes,p.coords,truck,rng.shuffle(boxes.map(b=>b.id)),{},false);used++;
-      if(ev.valid) {const score=loadingFitness(ev,weights);if(!best||score>best.score)best={score,moves:ev.moves,mass:ev.mass,loaded:ev.loaded,volume:ev.loadedVolume};}
+      if(ev.valid&&ev.loaded===boxes.length) {const score=loadingFitness(ev,weights);if(!best||score>best.score)best={score,moves:ev.moves,mass:ev.mass,loaded:ev.loaded,volume:ev.loadedVolume};}
       if(used%10===0)await new Promise(r=>setTimeout(r,0));
     }
     if(!best)throw Error('무작위 비교군에서 유효 상차 해답이 없습니다.');

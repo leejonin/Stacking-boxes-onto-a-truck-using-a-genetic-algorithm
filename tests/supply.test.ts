@@ -41,3 +41,18 @@ test('상자 할당 입력은 기본20개이며 최초 입력과 추가 묶음�
  const supply=new AutomaticSupply(boxes,1,37);assert.equal(supply.expand(best,truck)!.length,boxes.length+37);assert.equal(supply.expand(best,truck)!.length,boxes.length+74);
  assert.throws(()=>new AutomaticSupply(boxes,1,0));assert.throws(()=>new AutomaticSupply(boxes,1,NaN));
 });
+
+
+test('실제 Worker는 할당 상자를 모두 실은50개체가 있어야 첫 세대를 전달한다',async()=>{
+ const scope=globalThis as any;let result:any,error='';let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='generation'){result=m.generation;scope.self.onmessage({data:{type:'stop',run:107}});finish();}if(m.type==='error'){error=m.message;finish();}};
+ const {boxes}=initial();scope.self.onmessage({data:{type:'start',run:107,boxes:boxes.slice(0,3),truck:{width:40,depth:60,height:40},settings:{...DEFAULT_SETTINGS,population:50,generations:2},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:false,requireFullAllocation:true}});
+ const timeout=setTimeout(finish,5000);await done;clearTimeout(timeout);assert.equal(error,'');assert.ok(result);assert.equal(result.number,1);assert.equal(result.individuals.length,50);assert.ok(result.individuals.every((p:any)=>p.evaluation.loaded===3&&p.evaluation.unloadedIds.length===0));
+});
+
+test('Worker는 불가능한 전체 할당에서 다음 세대를 보내지 않고 원인을 알린다',async()=>{
+ const scope=globalThis as any;let generations=0,error='';let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='generation')generations++;if(m.type==='error'){error=m.message;finish();}};
+ const {boxes}=initial();scope.self.onmessage({data:{type:'start',run:108,boxes:boxes.slice(0,2),truck:{width:20,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:2},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:false,requireFullAllocation:true}});
+ const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);assert.equal(generations,0);assert.match(error,/총부피/);
+});

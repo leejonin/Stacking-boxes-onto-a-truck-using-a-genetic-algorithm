@@ -38,7 +38,7 @@ Worker start/pause/resume/stop/weights는 실행 ID로 분리된다. 약 12ms �
 
 ```tsx
 import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
-import { pack,randomPosition } from '../domain/packing';
+import { pack,randomPosition,loadingOrder } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
@@ -46,6 +46,8 @@ export class Engine {
   rng:Random; generation=0; population:Individual[]=[]; evaluations=0; version=1;
   private serial=0;
   seedLayout:Vec[]|undefined;
+  requireFullAllocation=false;
+  allocationProgress={ready:0,attempts:0,mostLoaded:0};
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
   }
@@ -84,22 +86,37 @@ export class Engine {
     this.evaluations++;
     const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false);
     if(!evaluation.valid)return null;
+    this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
+    if(this.requireFullAllocation&&evaluation.loaded!==this.boxes.length)return null;
     return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
     const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0;
-    if(this.population.length) {
-      const best=this.population.reduce((a,b)=>a.score>=b.score?a:b);
+    this.allocationProgress={ready:0,attempts:0,mostLoaded:0};
+    if(this.requireFullAllocation){
+      if(this.boxes.some(b=>b.size.some((v,i)=>v>[this.truck.width,this.truck.depth,this.truck.height][i])))throw Error('할당 상자 중 짐칸 치수를 넘는 상자가 있어 전부 배치할 수 없습니다. 초기화 후 입력을 조정하세요.');
+      if(this.boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)>this.truck.width*this.truck.depth*this.truck.height)throw Error('할당 상자의 총부피가 짐칸보다 큽니다. 다음 세대로 넘어가지 않습니다. 초기화 후 할당 개수를 줄이세요.');
+    }
+    const eligible=this.requireFullAllocation?this.population.filter(p=>p.evaluation.loaded===this.boxes.length):this.population;
+    if(eligible.length) {
+      const best=eligible.reduce((a,b)=>a.score>=b.score?a:b);
       next.push({...best,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[best.id],operation:'엘리트',coords:best.coords.map(p=>[...p] as Vec)});
+      this.allocationProgress.ready=next.length;this.allocationProgress.mostLoaded=best.evaluation.loaded;
     }
     while(next.length<this.settings.population) {
-      if(++attempts>this.settings.population*120) throw Error(`유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 상자 수·적재함·고정 배치를 확인하세요.`);
+      if(++attempts>this.settings.population*120) throw Error(`할당 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
+      this.allocationProgress.attempts=attempts;
       const child=this.population.length?this.offspring():null;
       const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true);
       if(candidate) {
-        const p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
-        if(p) {next.push(p);accepted++;}
+        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
+        if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
+          const order=loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed);
+          if(order)p=this.evaluate(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
+        }
+        if(p) {next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }
@@ -141,6 +158,7 @@ export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,w
     if(cancel())return result;
     progress(`${c.name} · seed ${seed}`);
     const e=new Engine(boxes,truck,{...settings,crossover:.9,mutation:.05,tournament:3,...c.patch,seed},weights);
+    e.requireFullAllocation=true;
     let attempts=0,accepted=0;
     for(let g=0;g<settings.generations;g++) {
       const iter=e.next();let step=iter.next(),chunk=performance.now();
@@ -154,7 +172,7 @@ export async function runExperiments(boxes:Box[],truck:Truck,settings:Settings,w
       if(++tries>e.evaluations*120)throw Error('무작위 비교군의 유효 배치 생성 한도 초과');
       const p=pack(boxes,truck,rng,undefined,{},true);if(!p)continue;
       const ev=simulateLoading(boxes,p.coords,truck,rng.shuffle(boxes.map(b=>b.id)),{},false);used++;
-      if(ev.valid) {const score=loadingFitness(ev,weights);if(!best||score>best.score)best={score,moves:ev.moves,mass:ev.mass,loaded:ev.loaded,volume:ev.loadedVolume};}
+      if(ev.valid&&ev.loaded===boxes.length) {const score=loadingFitness(ev,weights);if(!best||score>best.score)best={score,moves:ev.moves,mass:ev.mass,loaded:ev.loaded,volume:ev.loadedVolume};}
       if(used%10===0)await new Promise(r=>setTimeout(r,0));
     }
     if(!best)throw Error('무작위 비교군에서 유효 상차 해답이 없습니다.');
@@ -176,8 +194,9 @@ import { Engine } from '../ga/engine';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
 import {AutomaticSupply} from '../simulation/supply';
-export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
+export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number;requireFullAllocation?:boolean}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
 let engine:Engine|null=null,run=0,paused=false,stopped=false,iterator:Generator<void,Generation,void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
+let lastProgressAt=0;
 let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
 /** 공급 회차마다 다른 입력·ID를 구별해 과거 개체와 계보를 보존한다. */
 function displayIndividuals(individuals:import('../domain/model').Individual[]) {
@@ -203,6 +222,7 @@ function tick() {
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
+              next.requireFullAllocation=engine.requireFullAllocation;
               next.seedLayout=expanded.map((_,i)=>best.evaluation.finalCoords[i]??[-1,-1,-1]);next.version=engine.version;engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
@@ -213,6 +233,7 @@ function tick() {
         break;
       }
     } while(performance.now()<until);
+    if(engine.requireFullAllocation&&iterator&&performance.now()-lastProgressAt>250){lastProgressAt=performance.now();send('allocationProgress',{generation:engine.generation+1+generationOffset,boxes:engine.boxes.length,population:engine.settings.population,...engine.allocationProgress});}
     timer=setTimeout(tick,0);
   } catch(e) {stopped=true;send('error',{message:e instanceof Error?e.message:String(e)});}
 }
@@ -223,7 +244,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
   try {
     if(c.type==='start') {
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
-      engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
+      engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);engine.requireFullAllocation=!!c.requireFullAllocation;lastProgressAt=0;iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
       supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
       run=c.run;stopped=false;
@@ -294,3 +315,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 ## 2026-11-16 21:20:39 (KST) 첫 배포 복원
 
 사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.
+
+## 2026-11-16 23:16:42 (KST) 전체 할당 조건 추가
+
+현재 웹·비교 실험은 할당된 상자를 전부 실제 적재한 개체로만 세대를 구성한다. 유효 집단이 완성되기 전에는 세대를 올리지 않는다. 짐칸100% 조건과 다르며 상차 목적·기존 재이동 정의는 유지한다.30개 테스트·빌드 및 기본20개/3세대 전체 적재 확인. 상세 입력·복구·진행률·실패·호환 경로·재이동 정의: `Info/plan/2026-11-16/231642_할당상자전부배치세대조건과재이동정의_plan.md`.
