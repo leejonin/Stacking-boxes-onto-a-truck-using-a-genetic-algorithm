@@ -23,8 +23,9 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
-        if(engine.generation>=engine.settings.generations) {
+        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
+        const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
+        if(exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
             const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
             if(expanded){
@@ -51,7 +52,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
     if(c.type==='start') {
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
       engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
-      supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed):null;generationOffset=0;evaluationOffset=0;
+      supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
       run=c.run;stopped=false;
       const result=await runExperiments(c.boxes,c.truck,c.settings,c.weights,()=>stopped,(progress)=>send('experimentProgress',{progress}));

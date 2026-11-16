@@ -17,11 +17,14 @@ export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck):Vec|n
 /** 총 공급 개수를 정하지 않고 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */
 export class AutomaticSupply {
   round=1;private rng:Random;private nextId:number;
-  constructor(public boxes:Box[],seed:number){this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;}
+  constructor(public boxes:Box[],seed:number,public batchSize=20){
+    if(!Number.isInteger(batchSize)||batchSize<1)throw Error('공급량은 1 이상의 정수여야 합니다.');
+    this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;
+  }
   /** 최소 상자 부피도 남지 않은 경우만 종료한다. 현재 경로 막힘은 재배치 탐색으로 해결할 수 있다. */
   expand(best:Individual,truck:Truck):Box[]|null {
     if(truck.width*truck.depth*truck.height-best.evaluation.loadedVolume<1000)return null;
-    const incoming=generateBoxes(8,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
+    const incoming=generateBoxes(this.batchSize,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }
 }

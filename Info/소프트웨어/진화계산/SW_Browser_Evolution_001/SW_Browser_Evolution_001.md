@@ -208,8 +208,9 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
-        if(engine.generation>=engine.settings.generations) {
+        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
+        const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
+        if(exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
             const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
             if(expanded){
@@ -236,7 +237,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
     if(c.type==='start') {
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
       engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
-      supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed):null;generationOffset=0;evaluationOffset=0;
+      supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
       run=c.run;stopped=false;
       const result=await runExperiments(c.boxes,c.truck,c.settings,c.weights,()=>stopped,(progress)=>send('experimentProgress',{progress}));
@@ -270,3 +271,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 ## 2026-11-16 19:23:49 (KST) 자동 공급 경계 수정
 
 현재 동작·검증은 `Info/plan/2026-11-16/192349_자동공급세대계승수정_plan.md` 및 같은 기능의 최신 day에 기록했다. 이전 검증 기록은 당시 결과이며 현재 코드 스냅샷은 위에 갱신했다.
+
+## 2026-11-16 19:27:59 (KST) 공급량 설정과 즉시 공급
+
+최신 동작과 검증은 `Info/plan/2026-11-16/192759_공급량설정과소진즉시공급_plan.md`에 기록했다. 초기·추가 공급은 기본 20개이며 사용자가 양의 정수로 설정한다. 모든 상자를 실은 후보가 나오면 즉시 다음 회차로 연결한다. 세대의 localNumber로 조기 전환 시 누적 세대와 회차 내 세대를 구별한다.

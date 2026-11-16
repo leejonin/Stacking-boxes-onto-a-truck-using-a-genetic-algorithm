@@ -11,7 +11,7 @@ function initial() {
  return {boxes,coords,truck,best};
 }
 test('18개를 모두 실어도 공급이 끝나지 않으며 여러 회차의 ID·규격·seed를 보존한다',()=>{
- const {boxes,truck,best}=initial(),a=new AutomaticSupply(boxes,2026),b=new AutomaticSupply(boxes,2026);
+ const {boxes,truck,best}=initial(),a=new AutomaticSupply(boxes,2026,8),b=new AutomaticSupply(boxes,2026,8);
  for(let i=0;i<6;i++){assert.ok(a.expand(best,truck));b.expand(best,truck);}
  assert.ok(a.boxes.length>18);assert.equal(a.boxes.length,66);assert.equal(new Set(a.boxes.map(b=>b.id)).size,66);assert.deepEqual(a.boxes,b.boxes);assert.equal(a.round,7);
 });
@@ -24,7 +24,7 @@ test('100→101세대에 실제 부모·상차 순서·점수를 계승하고 18
  const settings={...DEFAULT_SETTINGS,population:6};
  const engine=new Engine(generateBoxes(18,2026),DEFAULT_TRUCK,settings,DEFAULT_WEIGHTS);
  let last=finishGeneration(engine);for(let i=1;i<100;i++)last=finishGeneration(engine);
- const supply=new AutomaticSupply(engine.boxes,2026),best=engine.population.reduce((a,b)=>a.score>=b.score?a:b);
+ const supply=new AutomaticSupply(engine.boxes,2026,8),best=engine.population.reduce((a,b)=>a.score>=b.score?a:b);
  const expanded=supply.expand(best,DEFAULT_TRUCK)!;assert.equal(expanded.length,26);
  const next=new Engine(expanded,DEFAULT_TRUCK,settings,DEFAULT_WEIGHTS);next.inherit(engine,'r1-');
  assert.equal(next.population.find(p=>p.id===`r1-${best.id}`)!.score,best.score);
@@ -40,20 +40,27 @@ test('입구가 막힌 현재 배치만으로 재배치 가능한 추가 공급�
  const b:Box={id:1,size:[20,10,20],weight:1,priority:1,grade:0},truck={width:20,depth:100,height:20};
  const engine=new Engine([b],truck,DEFAULT_SETTINGS,DEFAULT_WEIGHTS),best=engine.evaluate([[0,0,0]],[],'검증',false,[1])!;
  assert.equal(availableLoadingSlot([b],[[0,0,0]],truck),null);
- assert.equal(new AutomaticSupply([b],1).expand(best,truck)!.length,9);
+ assert.equal(new AutomaticSupply([b],1).expand(best,truck)!.length,21);
 });
-test('실제 Worker가 세대 예산이 끝나면 완료 대신 다음 공급 회차를 자동 진행한다',async()=>{
- const {boxes,truck}=initial();
+test('기본 공급량은 20개이고 사용자 공급량에는 임의 최대값이 없다',()=>{
+ const {boxes,truck,best}=initial();
+ assert.equal(new AutomaticSupply(boxes,1).expand(best,truck)!.length,38);
+ assert.equal(new AutomaticSupply(boxes,1,137).expand(best,truck)!.length,155);
+ assert.throws(()=>new AutomaticSupply(boxes,1,0));
+});
+test('실제 Worker는 공급량 소진 시 세대 예산을 기다리지 않고 지정 묶음을 즉시 공급한다',async()=>{
+ const {boxes,truck}=initial();const input=boxes.slice(0,1);
  const scope=globalThis as unknown as {self:{onmessage:(e:{data:unknown})=>void};postMessage:(m:any)=>void};
- let finish!:(v:void)=>void;const complete=new Promise<void>(resolve=>{finish=resolve;});let rounds=0,completed=false;
+ let finish!:(v:void)=>void;const complete=new Promise<void>(resolve=>{finish=resolve;});let rounds=0,completed=false,lastGeneration=0,firstSupplyGeneration=0;
  scope.self={onmessage:()=>{}};
  scope.postMessage=(m:any)=>{
-  if(m.type==='supply'){rounds++;if(rounds===2){scope.self.onmessage({data:{type:'stop',run:99}});finish();}}
+  if(m.type==='generation')lastGeneration=m.generation.number;
+  if(m.type==='supply'){rounds++;assert.equal(m.boxes.length,1+rounds);if(rounds===1)firstSupplyGeneration=lastGeneration;if(rounds===2){scope.self.onmessage({data:{type:'stop',run:99}});finish();}}
   if(m.type==='state'&&m.state==='완료')completed=true;
   if(m.type==='error')throw Error(m.message);
  };
  await import('../src/workers/evolution');
- scope.self.onmessage({data:{type:'start',run:99,boxes,truck,settings:{...DEFAULT_SETTINGS,population:3,generations:1},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
+ scope.self.onmessage({data:{type:'start',run:99,boxes:input,truck,settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
  const timeout=setTimeout(()=>finish(),10000);await complete;clearTimeout(timeout);
- assert.equal(rounds,2);assert.equal(completed,false);
+ assert.equal(rounds,2);assert.equal(completed,false);assert.equal(firstSupplyGeneration,1);
 });
