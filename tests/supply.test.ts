@@ -13,7 +13,7 @@ function initial() {
 }
 test('18개를 모두 실어도 공급이 끝나지 않으며 여러 회차의 ID·규격·seed를 보존한다',()=>{
  const {boxes,truck,best}=initial(),a=new AutomaticSupply(boxes,2026,8),b=new AutomaticSupply(boxes,2026,8);
- for(let i=0;i<6;i++){assert.ok(a.expand(best,truck));b.expand(best,truck);}
+ for(let i=0;i<6;i++){const previous=[...a.boxes],existingIds=new Set(previous.map(b=>b.id));assert.ok(a.expand(best,truck));b.expand(best,truck);assert.deepEqual(a.boxes.slice(0,previous.length),previous);for(const box of a.boxes.slice(previous.length))assert.equal(existingIds.has(box.id),false);}
  assert.ok(a.boxes.length>18);assert.equal(a.boxes.length,66);assert.equal(new Set(a.boxes.map(b=>b.id)).size,66);assert.deepEqual(a.boxes,b.boxes);assert.equal(a.round,7);
 });
 test('입력 개수와 무관하게 최소 규격을 넣을 실제 공간·입구 경로를 확인한다',()=>{
