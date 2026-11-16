@@ -48,6 +48,12 @@ test('기본 공급량은 20개이고 사용자 공급량에는 임의 최대값
  assert.equal(new AutomaticSupply(boxes,1,137).expand(best,truck)!.length,155);
  assert.throws(()=>new AutomaticSupply(boxes,1,0));
 });
+test('상자가 끝나거나 최소 상자보다 작은 빈틈이 남아도 완료하지 않고 적재 부피 100%일 때만 종료한다',()=>{
+ const {boxes,best}=initial(),truck={width:20,depth:20,height:20};
+ const supply=new AutomaticSupply(boxes,1);
+ assert.ok(supply.expand({...best,evaluation:{...best.evaluation,loadedVolume:7500}},truck));
+ assert.equal(supply.expand({...best,evaluation:{...best.evaluation,loadedVolume:8000}},truck),null);
+});
 test('실제 Worker는 공급량 소진 시 세대 예산을 기다리지 않고 지정 묶음을 즉시 공급한다',async()=>{
  const {boxes,truck}=initial();const input=boxes.slice(0,1);
  const scope=globalThis as unknown as {self:{onmessage:(e:{data:unknown})=>void};postMessage:(m:any)=>void};
@@ -63,4 +69,14 @@ test('실제 Worker는 공급량 소진 시 세대 예산을 기다리지 않고
  scope.self.onmessage({data:{type:'start',run:99,boxes:input,truck,settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
  const timeout=setTimeout(()=>finish(),10000);await complete;clearTimeout(timeout);
  assert.equal(rounds,2);assert.equal(completed,false);assert.equal(firstSupplyGeneration,1);
+});
+
+test('실제 Worker는 미적재 입력이 남아도 짐칸이 꽉 차면 세대 예산 전에 완료하고 가득 찬 개체를 전달한다',async()=>{
+ const scope=globalThis as any;let lastGeneration=0,completed=false,full:any,supplied=false;
+ let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='generation')lastGeneration=m.generation.number;if(m.type==='capacity')full=m.individual;if(m.type==='supply')supplied=true;if(m.type==='state'&&m.state==='완료'){completed=true;finish();}if(m.type==='error'){finish();throw Error(m.message);}};
+ const {boxes}=initial();
+ scope.self.onmessage({data:{type:'start',run:100,boxes:boxes.slice(0,2),truck:{width:20,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
+ const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
+ assert.equal(completed,true);assert.equal(lastGeneration,1);assert.equal(supplied,false);assert.equal(full.evaluation.utilization,1);assert.equal(full.evaluation.loaded,1);
 });

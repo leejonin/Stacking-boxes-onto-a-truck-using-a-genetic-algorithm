@@ -1,6 +1,7 @@
-import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
+import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation,type LoadingSnapshot } from '../domain/model';
 import { pack,randomPosition } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
+import {simulateAccumulatedLoading} from '../simulation/accumulated';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
 export class Engine {
@@ -8,20 +9,24 @@ export class Engine {
   private serial=0;
   seedLayout:Vec[]|undefined;
   reference:{count:number;volume:number};
+  accumulated:LoadingSnapshot|undefined;
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
     this.reference={count:boxes.length,volume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)};
   }
   /** 공급 전 집단의 좌표·상차 순서·부모 ID와 최초 점수 기준을 다음 회차에 계승한다. */
-  inherit(previous:Engine,prefix:string):void {
+  inherit(previous:Engine,prefix:string,committed?:Individual):void {
     this.reference={...previous.reference};this.version=previous.version;
+    if(committed)this.accumulated={positions:Object.fromEntries(previous.boxes.flatMap((b,i)=>committed.evaluation.finalCoords[i][0]>=0?[[b.id,[...committed.evaluation.finalCoords[i]] as Vec]]:[])),moves:committed.evaluation.moves,mass:committed.evaluation.mass};
     const added=this.boxes.slice(previous.boxes.length).map(b=>b.id);
-    this.population=previous.population.map(p=>{
-      const coords=this.boxes.map((_,i)=>[...(p.coords[i]??[-1,-1,-1])] as Vec);
+    this.population=previous.population.flatMap(p=>{
+      const source=committed?p.evaluation.finalCoords:p.coords;
+      const coords=this.boxes.map((_,i)=>[...(source[i]??[-1,-1,-1])] as Vec);
       const migrant=this.evaluate(coords,[],p.operation,p.repaired,[...p.loadOrder,...added]);
-      if(!migrant)throw Error('공급 전 집단을 계승하지 못했습니다.');
-      return {...migrant,id:prefix+p.id,generation:0};
+      if(!migrant){if(committed)return [];throw Error('공급 전 집단을 계승하지 못했습니다.');}
+      return [{...migrant,id:prefix+p.id,generation:0}];
     });
+    if(!this.population.length)throw Error('누적 상차 집단을 계승하지 못했습니다.');
   }
   /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
   select():Individual {
@@ -56,7 +61,7 @@ export class Engine {
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
-    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
+    const {events:_,...evaluation}=this.accumulated?simulateAccumulatedLoading(this.boxes,coords,this.truck,loadOrder,this.accumulated,this.fixed,false,this.reference):simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
     if(!evaluation.valid)return null;
     return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }
@@ -72,7 +77,9 @@ export class Engine {
       const child=this.population.length?this.offspring():null;
       const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true);
       if(candidate) {
-        const p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        // 누적 상자 유실 후보를 반복 생성해 멈춘 것처럼 보이지 않도록 검증된 부모를 보존한다.
+        if(!p&&this.accumulated&&this.population.length){const parent=this.select();p={...parent,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[parent.id],operation:'유효 배치 보존',coords:parent.coords.map(v=>[...v] as Vec)};}
         if(p) {next.push(p);accepted++;}
       }
       yield;

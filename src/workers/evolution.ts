@@ -23,18 +23,20 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
+        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
         const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        if(exhausted||engine.generation>=engine.settings.generations) {
+        const filled=supply&&engine.population.some(p=>p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height);
+        if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
-            const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
+            const completed=engine.population.filter(p=>filled?p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height:p.evaluation.loaded===engine!.boxes.length);
+            const best=(completed.length?completed:engine.population).reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
-              next.inherit(engine,`r${previousRound}-`);engine=next;
+              next.inherit(engine,`r${previousRound}-`,best);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'남은 적재 부피가 최소 생성 상자(10×10×10cm)보다 작습니다.'});
+            send('capacity',{message:'짐칸 적재 부피 100% · 상차 완료',individual:displayIndividuals([best])[0]});
           }
           paused=true;send('state',{state:'완료'});return;
         }
@@ -52,6 +54,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
     if(c.type==='start') {
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
       engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
+      if(c.automatic)engine.accumulated={positions:{...c.fixed},moves:0,mass:0};
       supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
       run=c.run;stopped=false;

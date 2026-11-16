@@ -35,9 +35,10 @@ Worker start/pause/resume/stop/weights는 실행 ID로 분리된다. 약 12ms �
 ### `src/ga/engine.ts`
 
 ```tsx
-import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation } from '../domain/model';
+import { Random,validateConfig,type Box,type Vec,type Truck,type Weights,type Settings,type Individual,type Generation,type LoadingSnapshot } from '../domain/model';
 import { pack,randomPosition } from '../domain/packing';
 import { simulateLoading,loadingFitness } from '../simulation/loading';
+import {simulateAccumulatedLoading} from '../simulation/accumulated';
 
 /** 좌표 기반 GA의 집단·난수·평가 예산을 관리한다. SW_Browser_Evolution_001 */
 export class Engine {
@@ -45,20 +46,24 @@ export class Engine {
   private serial=0;
   seedLayout:Vec[]|undefined;
   reference:{count:number;volume:number};
+  accumulated:LoadingSnapshot|undefined;
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
     this.reference={count:boxes.length,volume:boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)};
   }
   /** 공급 전 집단의 좌표·상차 순서·부모 ID와 최초 점수 기준을 다음 회차에 계승한다. */
-  inherit(previous:Engine,prefix:string):void {
+  inherit(previous:Engine,prefix:string,committed?:Individual):void {
     this.reference={...previous.reference};this.version=previous.version;
+    if(committed)this.accumulated={positions:Object.fromEntries(previous.boxes.flatMap((b,i)=>committed.evaluation.finalCoords[i][0]>=0?[[b.id,[...committed.evaluation.finalCoords[i]] as Vec]]:[])),moves:committed.evaluation.moves,mass:committed.evaluation.mass};
     const added=this.boxes.slice(previous.boxes.length).map(b=>b.id);
-    this.population=previous.population.map(p=>{
-      const coords=this.boxes.map((_,i)=>[...(p.coords[i]??[-1,-1,-1])] as Vec);
+    this.population=previous.population.flatMap(p=>{
+      const source=committed?p.evaluation.finalCoords:p.coords;
+      const coords=this.boxes.map((_,i)=>[...(source[i]??[-1,-1,-1])] as Vec);
       const migrant=this.evaluate(coords,[],p.operation,p.repaired,[...p.loadOrder,...added]);
-      if(!migrant)throw Error('공급 전 집단을 계승하지 못했습니다.');
-      return {...migrant,id:prefix+p.id,generation:0};
+      if(!migrant){if(committed)return [];throw Error('공급 전 집단을 계승하지 못했습니다.');}
+      return [{...migrant,id:prefix+p.id,generation:0}];
     });
+    if(!this.population.length)throw Error('누적 상차 집단을 계승하지 못했습니다.');
   }
   /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
   select():Individual {
@@ -93,7 +98,7 @@ export class Engine {
   /** 상차 순서를 실제 실행하고 적재량·공간 활용·상차 재배치로 후보를 평가한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {
     this.evaluations++;
-    const {events:_,...evaluation}=simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
+    const {events:_,...evaluation}=this.accumulated?simulateAccumulatedLoading(this.boxes,coords,this.truck,loadOrder,this.accumulated,this.fixed,false,this.reference):simulateLoading(this.boxes,coords,this.truck,loadOrder,this.fixed,false,this.reference);
     if(!evaluation.valid)return null;
     return {id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:loadingFitness(evaluation,this.weights),version:this.version};
   }
@@ -109,7 +114,9 @@ export class Engine {
       const child=this.population.length?this.offspring():null;
       const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true);
       if(candidate) {
-        const p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
+        // 누적 상자 유실 후보를 반복 생성해 멈춘 것처럼 보이지 않도록 검증된 부모를 보존한다.
+        if(!p&&this.accumulated&&this.population.length){const parent=this.select();p={...parent,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[parent.id],operation:'유효 배치 보존',coords:parent.coords.map(v=>[...v] as Vec)};}
         if(p) {next.push(p);accepted++;}
       }
       yield;
@@ -208,18 +215,20 @@ function tick() {
       const result=iterator.next();
       if(result.done) {
         iterator=null;const g=result.value;
-        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,round:supply?.round??1}});
+        send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
         const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        if(exhausted||engine.generation>=engine.settings.generations) {
+        const filled=supply&&engine.population.some(p=>p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height);
+        if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
-            const best=engine.population.reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
+            const completed=engine.population.filter(p=>filled?p.evaluation.loadedVolume>=engine!.truck.width*engine!.truck.depth*engine!.truck.height:p.evaluation.loaded===engine!.boxes.length);
+            const best=(completed.length?completed:engine.population).reduce((a,b)=>a.score>=b.score?a:b),previousRound=supply.round,expanded=supply.expand(best,engine.truck);
             if(expanded){
               generationOffset+=engine.generation;evaluationOffset+=engine.evaluations;
               const next=new Engine(expanded,engine.truck,{...engine.settings,seed:(engine.settings.seed+1)>>>0},engine.weights,engine.fixed);
-              next.inherit(engine,`r${previousRound}-`);engine=next;
+              next.inherit(engine,`r${previousRound}-`,best);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:'남은 적재 부피가 최소 생성 상자(10×10×10cm)보다 작습니다.'});
+            send('capacity',{message:'짐칸 적재 부피 100% · 상차 완료',individual:displayIndividuals([best])[0]});
           }
           paused=true;send('state',{state:'완료'});return;
         }
@@ -237,6 +246,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
     if(c.type==='start') {
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
       engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
+      if(c.automatic)engine.accumulated={positions:{...c.fixed},moves:0,mass:0};
       supply=c.automatic?new AutomaticSupply(c.boxes,c.inputSeed??c.settings.seed,c.boxes.length):null;generationOffset=0;evaluationOffset=0;
     } else if(c.type==='experiment') {
       run=c.run;stopped=false;
@@ -275,3 +285,9 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
 ## 2026-11-16 19:27:59 (KST) 공급량 설정과 즉시 공급
 
 최신 동작과 검증은 `Info/plan/2026-11-16/192759_공급량설정과소진즉시공급_plan.md`에 기록했다. 초기·추가 공급은 기본 20개이며 사용자가 양의 정수로 설정한다. 모든 상자를 실은 후보가 나오면 즉시 다음 회차로 연결한다. 세대의 localNumber로 조기 전환 시 누적 세대와 회차 내 세대를 구별한다.
+
+## 2026-11-16 19:40:12 (KST) 누적 상차 유지
+
+최신 누적 처리와 함수 호출·검증·한계는 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`에 기록했다. 자동 공급에서는 기존 상자 ID를 보존하면서 좌표 이동을 허용하며, 이번 회차에서 움직인 상자당 1회·해당 중량을 기존 누적 비용에 더한다. 함수 입력·반환값과 실제 처리 순서는 위 코드의 주석·자료형을 따른다.
+
+- 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.

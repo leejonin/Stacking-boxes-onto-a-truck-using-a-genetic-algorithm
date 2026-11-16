@@ -21,9 +21,9 @@ export class AutomaticSupply {
     if(!Number.isInteger(batchSize)||batchSize<1)throw Error('공급량은 1 이상의 정수여야 합니다.');
     this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;
   }
-  /** 최소 상자 부피도 남지 않은 경우만 종료한다. 현재 경로 막힘은 재배치 탐색으로 해결할 수 있다. */
+  /** 실제 적재 부피가 짐칸 전체를 채운 경우만 종료한다. 세대·공급량·작은 틈은 완료 조건이 아니다. */
   expand(best:Individual,truck:Truck):Box[]|null {
-    if(truck.width*truck.depth*truck.height-best.evaluation.loadedVolume<1000)return null;
+    if(best.evaluation.loadedVolume>=truck.width*truck.depth*truck.height)return null;
     const incoming=generateBoxes(this.batchSize,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }

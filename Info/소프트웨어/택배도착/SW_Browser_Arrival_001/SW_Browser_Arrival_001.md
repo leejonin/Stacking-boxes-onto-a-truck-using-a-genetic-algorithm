@@ -94,9 +94,9 @@ export class AutomaticSupply {
     if(!Number.isInteger(batchSize)||batchSize<1)throw Error('공급량은 1 이상의 정수여야 합니다.');
     this.rng=new Random(seed^0x51A771);this.nextId=boxes.reduce((max,b)=>Math.max(max,b.id),0)+1;
   }
-  /** 최소 상자 부피도 남지 않은 경우만 종료한다. 현재 경로 막힘은 재배치 탐색으로 해결할 수 있다. */
+  /** 실제 적재 부피가 짐칸 전체를 채운 경우만 종료한다. 세대·공급량·작은 틈은 완료 조건이 아니다. */
   expand(best:Individual,truck:Truck):Box[]|null {
-    if(truck.width*truck.depth*truck.height-best.evaluation.loadedVolume<1000)return null;
+    if(best.evaluation.loadedVolume>=truck.width*truck.depth*truck.height)return null;
     const incoming=generateBoxes(this.batchSize,this.rng.int(0,4294967295)).map(b=>({...b,id:this.nextId++}));
     this.boxes=[...this.boxes,...incoming];this.round++;return this.boxes;
   }
@@ -115,3 +115,5 @@ AutomaticSupply가 첫 입력 소진 후에도 처리 묶음별 새 상자를 �
 ## 2026-11-16 19:27:59 (KST) 공급량 설정과 즉시 공급
 
 최신 동작과 검증은 `Info/plan/2026-11-16/192759_공급량설정과소진즉시공급_plan.md`에 기록했다. 초기·추가 공급은 기본 20개이며 사용자가 양의 정수로 설정한다. 모든 상자를 실은 후보가 나오면 즉시 다음 회차로 연결한다. 세대의 localNumber로 조기 전환 시 누적 세대와 회차 내 세대를 구별한다.
+
+- 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
