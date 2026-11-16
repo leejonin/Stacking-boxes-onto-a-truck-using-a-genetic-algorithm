@@ -2,6 +2,8 @@
 
 **유전 알고리즘으로 탑차의 상차 순서와 배치를 개선하는 3D 웹 실험실입니다.** 적재량과 공간 활용을 높이고, 상차 도중 이미 실은 상자를 다시 옮기는 작업을 줄이는 것이 목적입니다.
 
+**하차 최적화 부분은 상의 필요.** 하차 우선순위와 평가식 적용 여부는 추가 협의 후 결정하며, 현재 배포본의 상차 기준을 유지합니다.
+
 [웹에서 실행하기](https://leejonin.github.io/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/) · [배포 상태](https://github.com/leejonin/Stacking-boxes-onto-a-truck-using-a-genetic-algorithm/deployments/github-pages)
 
 ## 주요 기능
