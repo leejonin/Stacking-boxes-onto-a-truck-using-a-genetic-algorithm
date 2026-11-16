@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {AutomaticSupply,availableLoadingSlot,loadingComplete} from '../src/simulation/supply';
+import {AutomaticSupply,availableLoadingSlot,loadingComplete,validateCompletionPercent} from '../src/simulation/supply';
 import {Engine,finishGeneration} from '../src/ga/engine';
 import {DEFAULT_WEIGHTS,DEFAULT_SETTINGS,DEFAULT_TRUCK,generateBoxes,type Box,type Vec} from '../src/domain/model';
 /** 이미 상차된 작은 상자 목록을 만들어 공급 총량과 물리 공간을 분리해 검사한다. */
@@ -97,4 +97,25 @@ test('실제 Worker는 한 개체에 추가 공간이 없으면 100% 미만이�
  scope.self.onmessage({data:{type:'start',run:101,boxes:boxes.slice(0,2),truck:{width:25,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026}});
  const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
  assert.equal(completed,true);assert.equal(full.generation,1);assert.equal(full.evaluation.utilization,.8);
+});
+
+
+test('완료 적재율 기본100%와 변경값의 이상 경계 및 입력 범위를 검사한다',()=>{
+ const {boxes}=initial(),input=boxes.slice(0,1),truck={width:100,depth:20,height:20};
+ const engine=new Engine(input,truck,DEFAULT_SETTINGS,DEFAULT_WEIGHTS),p=engine.evaluate([[0,0,0]],[],'검사',false,[1])!;
+ assert.equal(loadingComplete(input,p,truck),false);
+ assert.equal(loadingComplete(input,p,truck,20),true);
+ assert.equal(loadingComplete(input,p,truck,20.1),false);
+ for(const value of [0,100.1,NaN,Infinity])assert.throws(()=>validateCompletionPercent(value));
+ for(const value of [1,90.5,100])assert.doesNotThrow(()=>validateCompletionPercent(value));
+});
+
+test('실제 Worker가 사용자 지정 완료 적재율을 적용한다',async()=>{
+ const scope=globalThis as any;let full:any,completed=false,message='';
+ let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='capacity'){full=m.individual;message=m.message;}if(m.type==='state'&&m.state==='완료'){completed=true;finish();}if(m.type==='error'){finish();throw Error(m.message);}};
+ const {boxes}=initial();
+ scope.self.onmessage({data:{type:'start',run:102,boxes:boxes.slice(0,1),truck:{width:100,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:100},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:true,inputSeed:2026,completionPercent:20}});
+ const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);
+ assert.equal(completed,true);assert.equal(full.generation,1);assert.equal(full.evaluation.utilization,.2);assert.match(message,/목표 적재율 20% 도달/);
 });

@@ -14,9 +14,14 @@ export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck,requir
   return null;
 }
 
-/** 현재 개체에 최소 생성 규격도 추가할 수 없는지 검사한다. 기존 상자는 이동 가능하므로 입구 막힘만으로 완료하지 않는다. */
-export function loadingComplete(boxes:Box[],individual:Individual,truck:Truck):boolean {
-  return individual.evaluation.loadedVolume>=truck.width*truck.depth*truck.height||availableLoadingSlot(boxes,individual.evaluation.finalCoords,truck,false)===null;
+/** 완료 적재율(기본100%) 도달 또는 최소 생성 규격의 추가 공간 소진을 검사한다. 입구 막힘만으로 완료하지 않는다. */
+export function loadingComplete(boxes:Box[],individual:Individual,truck:Truck,completionPercent=100):boolean {
+  return individual.evaluation.loadedVolume*100>=truck.width*truck.depth*truck.height*completionPercent||availableLoadingSlot(boxes,individual.evaluation.finalCoords,truck,false)===null;
+}
+
+/** 완료 적재율은 짐칸 부피 기준 1~100%의 유한한 숫자여야 한다. */
+export function validateCompletionPercent(percent:number):void {
+  if(!Number.isFinite(percent)||percent<1||percent>100)throw Error('완료 적재율은 1~100% 사이의 숫자여야 합니다.');
 }
 
 /** 총 공급 개수를 정하지 않고 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */

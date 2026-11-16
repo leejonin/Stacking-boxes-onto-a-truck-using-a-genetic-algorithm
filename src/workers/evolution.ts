@@ -2,10 +2,10 @@
 import { Engine } from '../ga/engine';
 import type { Box,Truck,Settings,Weights,Vec,Generation } from '../domain/model';
 import { runExperiments } from '../ga/experiments';
-import {AutomaticSupply,loadingComplete} from '../simulation/supply';
-export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
+import {AutomaticSupply,loadingComplete,validateCompletionPercent} from '../simulation/supply';
+export type Command = {type:'start';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights;fixed:Record<number,Vec>;arrival:boolean;automatic?:boolean;inputSeed?:number;completionPercent?:number}|{type:'pause'|'resume'|'stop';run:number}|{type:'weights';run:number;weights:Weights}|{type:'experiment';run:number;boxes:Box[];truck:Truck;settings:Settings;weights:Weights};
 let engine:Engine|null=null,run=0,paused=false,stopped=false,iterator:Generator<void,Generation,void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
-let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0;
+let supply:AutomaticSupply|null=null,generationOffset=0,evaluationOffset=0,completionPercent=100;
 /** 공급 회차마다 다른 입력·ID를 구별해 과거 개체와 계보를 보존한다. */
 function displayIndividuals(individuals:import('../domain/model').Individual[]) {
   const prefix=supply?`r${supply.round}-`:'';
@@ -25,7 +25,7 @@ function tick() {
         iterator=null;const g=result.value;
         send('generation',{generation:{...g,localNumber:g.number,number:g.number+generationOffset,evaluations:g.evaluations+evaluationOffset,individuals:displayIndividuals(g.individuals),boxes:engine.boxes,fixed:engine.fixed,accumulated:engine.accumulated,round:supply?.round??1}});
         const exhausted=supply&&engine.population.some(p=>p.evaluation.loaded===engine!.boxes.length);
-        const completeCandidates=supply?engine.population.filter(p=>loadingComplete(engine!.boxes,p,engine!.truck)):[];
+        const completeCandidates=supply?engine.population.filter(p=>loadingComplete(engine!.boxes,p,engine!.truck,completionPercent)):[];
         const filled=completeCandidates.length>0;
         if(filled||exhausted||engine.generation>=engine.settings.generations) {
           if(supply){
@@ -37,7 +37,7 @@ function tick() {
               next.inherit(engine,`r${previousRound}-`,best);engine=next;
               send('supply',{boxes:expanded,round:supply.round});break;
             }
-            send('capacity',{message:best.evaluation.utilization>=1?'짐칸 적재 부피 100% · 상차 완료':'선택 개체에 최소 규격 상자(10×10×10cm)를 추가할 공간이 없습니다 · 상차 완료',individual:displayIndividuals([best])[0]});
+            send('capacity',{message:best.evaluation.loadedVolume*100>=engine.truck.width*engine.truck.depth*engine.truck.height*completionPercent?`목표 적재율 ${completionPercent}% 도달 · 현재 ${(best.evaluation.utilization*100).toFixed(1)}% · 상차 완료`:'선택 개체에 최소 규격 상자(10×10×10cm)를 추가할 공간이 없습니다 · 상차 완료',individual:displayIndividuals([best])[0]});
           }
           paused=true;send('state',{state:'완료'});return;
         }
@@ -53,6 +53,7 @@ self.onmessage=async(event:MessageEvent<Command>)=>{
   const c=event.data;
   try {
     if(c.type==='start') {
+      const target=c.completionPercent??100;validateCompletionPercent(target);completionPercent=target;
       if(timer!==undefined)clearTimeout(timer);timer=undefined;run=c.run;
       engine=new Engine(c.boxes,c.truck,c.settings,c.weights,c.fixed,c.arrival);iterator=null;paused=false;stopped=false;send('state',{state:'실행'});schedule();
       if(c.automatic)engine.accumulated={positions:{...c.fixed},moves:0,mass:0};

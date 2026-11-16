@@ -87,9 +87,14 @@ export function availableLoadingSlot(boxes:Box[],coords:Vec[],truck:Truck,requir
   return null;
 }
 
-/** 현재 개체에 최소 생성 규격도 추가할 수 없는지 검사한다. 기존 상자는 이동 가능하므로 입구 막힘만으로 완료하지 않는다. */
-export function loadingComplete(boxes:Box[],individual:Individual,truck:Truck):boolean {
-  return individual.evaluation.loadedVolume>=truck.width*truck.depth*truck.height||availableLoadingSlot(boxes,individual.evaluation.finalCoords,truck,false)===null;
+/** 완료 적재율(기본100%) 도달 또는 최소 생성 규격의 추가 공간 소진을 검사한다. 입구 막힘만으로 완료하지 않는다. */
+export function loadingComplete(boxes:Box[],individual:Individual,truck:Truck,completionPercent=100):boolean {
+  return individual.evaluation.loadedVolume*100>=truck.width*truck.depth*truck.height*completionPercent||availableLoadingSlot(boxes,individual.evaluation.finalCoords,truck,false)===null;
+}
+
+/** 완료 적재율은 짐칸 부피 기준 1~100%의 유한한 숫자여야 한다. */
+export function validateCompletionPercent(percent:number):void {
+  if(!Number.isFinite(percent)||percent<1||percent>100)throw Error('완료 적재율은 1~100% 사이의 숫자여야 합니다.');
 }
 
 /** 총 공급 개수를 정하지 않고 다음 탐색용 택배를 계속 생성한다. SW_Browser_Arrival_001 */
@@ -124,3 +129,5 @@ AutomaticSupply가 첫 입력 소진 후에도 처리 묶음별 새 상자를 �
 - 2026-11-16 19:42:17 (KST) 최종 완료 조건: 자동 공급은 적재 부피100%일 때만 즉시 완료하며 가득 찬 개체를 표시한다. 작은 틈·세대 예산·공급량 소진으로 완료하지 않는다. 전체33개 테스트와 빌드 성공. 기준과 한계: `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md`.
 
 - 2026-11-16 19:44:49 (KST) 최종 조건 보완: 매 세대 한 개체라도100% 또는 최소 상자 추가 공간이 없으면 즉시 완료하며 해당 개체를 표시한다. 단순 입구 차단 제외.35개 테스트·빌드 성공. 앞선100% 단독 조건은 `Info/plan/2026-11-16/194012_누적상차유지와상자당재이동비용_plan.md` 최종 절로 대체한다.
+
+- 2026-11-16 19:48:40 (KST) 완료 적재율 입력: 기본100%, 자동 공급에서1~100% 설정. Worker 전달·검증과 부피 비율 이상 완료를 적용하며 추가 불가 조건 유지.37개 테스트·빌드 성공. 계획: `Info/plan/2026-11-16/194840_완료적재율입력설정_plan.md`.
