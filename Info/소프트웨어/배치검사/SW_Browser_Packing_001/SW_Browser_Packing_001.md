@@ -157,13 +157,16 @@ export function candidates(box: Box, placed: Placed[], truck: Truck): Vec[] {
   return out;
 }
 /** 무작위 유효 위치를 선택하고 원본 배열은 보존한다. */
-export function randomPosition(box: Box, placed: Placed[], truck: Truck, rng: Random, accessible = false): Vec | null {
-  const options=candidates(box,placed,truck), start=options.length?rng.int(0,options.length-1):0;
+export function randomPosition(box: Box, placed: Placed[], truck: Truck, rng: Random, accessible = false, compact = false): Vec | null {
+  const options=candidates(box,placed,truck);
+  // 완전 할당 후보는 바닥·안쪽부터 채워 무작위 산재로 생기는 자투리 공간을 줄인다.
+  if(compact)options.sort((a,b)=>a[2]-b[2]||b[1]-a[1]||a[0]-b[0]);
+  const start=!compact&&options.length?rng.int(0,options.length-1):0;
   for(let k=0;k<options.length;k++) { const pos=options[(start+k)%options.length]; if(fits(box,pos,placed,truck) && (!accessible||!blockers({box,pos},placed).length)) return pos; }
   return null;
 }
 /** 좌표 유전자를 우선 배치하고 무효 부분만 재배치한다. 고정 상자는 보존한다. */
-export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[], fixed: Record<number,Vec> = {}, allowPartial=false): {coords:Vec[];repaired:boolean} | null {
+export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[], fixed: Record<number,Vec> = {}, allowPartial=false, compact=false): {coords:Vec[];repaired:boolean} | null {
   const placed:Placed[]=[], coords:Vec[]=new Array(boxes.length); let repaired=false;
   const fixedIndices=boxes.map((_,i)=>i).filter(i=>fixed[boxes[i].id]);
   for(const i of fixedIndices) { coords[i]=[...fixed[boxes[i].id]];placed.push({box:boxes[i],pos:coords[i]}); }
@@ -173,7 +176,7 @@ export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[],
   if(preferred) indices.sort((a,b)=>(preferred[a]?.[2]??0)-(preferred[b]?.[2]??0));
   for(const i of indices) {
     const wish=preferred?.[i]; let pos:Vec|null=wish&&fits(boxes[i],wish,placed,truck)?[...wish]:null;
-    if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng);if(wish) repaired=true;}
+    if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng,false,compact);if(wish) repaired=true;}
     if(!pos) {if(allowPartial){coords[i]=[-1,-1,-1];repaired=true;continue;}return null;}
     coords[i]=pos;placed.push({box:boxes[i],pos});
   }
@@ -245,3 +248,8 @@ generateBoxes의 120개 상한을 제거하고 양의 정수만 검사한다. 24
 ## 2026-11-16 21:20:39 (KST) 첫 배포 복원
 
 사용자가 첫 배포 상차 버전으로 복원하고 상자 할당 입력만 유지하도록 명시했다. 위 코드 스냅샷은 현재 복원본이다.24개 테스트·빌드 성공. 상세 복원 범위·초기값·제한·관련 기록은 `Info/plan/2026-11-16/212039_첫배포상차복원과상자할당입력유지_plan.md`. 이전 구현·검증·보류·재승인은 당시 기록으로 보존하고 현재 동작 주장으로 사용하지 않는다.
+
+
+## 2026-11-16 23:55:04 (KST) 첫 세대 지연 수정
+
+전체 코드 스냅샷을 현재 소스와 맞췄다. 비기본35개 지연 재현·compact 배치 보완·준비 진행률과 시도 표시. 목적·세대 완료 조건·재이동 정의 유지. 상세 결과와 한계: `Info/plan/2026-11-16/235504_1세대지연과비기본설정검증_plan.md`.34개 테스트·빌드 통과.

@@ -50,13 +50,16 @@ export function candidates(box: Box, placed: Placed[], truck: Truck): Vec[] {
   return out;
 }
 /** 무작위 유효 위치를 선택하고 원본 배열은 보존한다. */
-export function randomPosition(box: Box, placed: Placed[], truck: Truck, rng: Random, accessible = false): Vec | null {
-  const options=candidates(box,placed,truck), start=options.length?rng.int(0,options.length-1):0;
+export function randomPosition(box: Box, placed: Placed[], truck: Truck, rng: Random, accessible = false, compact = false): Vec | null {
+  const options=candidates(box,placed,truck);
+  // 완전 할당 후보는 바닥·안쪽부터 채워 무작위 산재로 생기는 자투리 공간을 줄인다.
+  if(compact)options.sort((a,b)=>a[2]-b[2]||b[1]-a[1]||a[0]-b[0]);
+  const start=!compact&&options.length?rng.int(0,options.length-1):0;
   for(let k=0;k<options.length;k++) { const pos=options[(start+k)%options.length]; if(fits(box,pos,placed,truck) && (!accessible||!blockers({box,pos},placed).length)) return pos; }
   return null;
 }
 /** 좌표 유전자를 우선 배치하고 무효 부분만 재배치한다. 고정 상자는 보존한다. */
-export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[], fixed: Record<number,Vec> = {}, allowPartial=false): {coords:Vec[];repaired:boolean} | null {
+export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[], fixed: Record<number,Vec> = {}, allowPartial=false, compact=false): {coords:Vec[];repaired:boolean} | null {
   const placed:Placed[]=[], coords:Vec[]=new Array(boxes.length); let repaired=false;
   const fixedIndices=boxes.map((_,i)=>i).filter(i=>fixed[boxes[i].id]);
   for(const i of fixedIndices) { coords[i]=[...fixed[boxes[i].id]];placed.push({box:boxes[i],pos:coords[i]}); }
@@ -66,7 +69,7 @@ export function pack(boxes: Box[], truck: Truck, rng: Random, preferred?: Vec[],
   if(preferred) indices.sort((a,b)=>(preferred[a]?.[2]??0)-(preferred[b]?.[2]??0));
   for(const i of indices) {
     const wish=preferred?.[i]; let pos:Vec|null=wish&&fits(boxes[i],wish,placed,truck)?[...wish]:null;
-    if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng);if(wish) repaired=true;}
+    if(!pos) {pos=randomPosition(boxes[i],placed,truck,rng,false,compact);if(wish) repaired=true;}
     if(!pos) {if(allowPartial){coords[i]=[-1,-1,-1];repaired=true;continue;}return null;}
     coords[i]=pos;placed.push({box:boxes[i],pos});
   }

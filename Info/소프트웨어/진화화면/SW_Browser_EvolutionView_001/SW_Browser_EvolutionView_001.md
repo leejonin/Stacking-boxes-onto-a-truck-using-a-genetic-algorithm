@@ -58,7 +58,7 @@ export function App() {
   const [count,setCount]=useState(20),[inputSeed,setInputSeed]=useState(2026),[boxes,setBoxes]=useState<Box[]>(()=>generateBoxes(20,2026));
   const [truck,setTruck]=useState<Truck>({...DEFAULT_TRUCK}),[settings,setSettings]=useState<Settings>({...DEFAULT_SETTINGS}),[weights,setWeights]=useState<Weights>({...DEFAULT_WEIGHTS});
   const [applied,setApplied]=useState<Weights>({...DEFAULT_WEIGHTS}),[state,setState]=useState('준비'),[history,setHistory]=useState<Generation[]>([]),[selected,setSelected]=useState<Individual|null>(null),[follow,setFollow]=useState(true),[message,setMessage]=useState('');
-  const [allocationProgress,setAllocationProgress]=useState<{generation:number;boxes:number;population:number;ready:number;mostLoaded:number}|null>(null);
+  const [allocationProgress,setAllocationProgress]=useState<{generation:number;boxes:number;population:number;ready:number;mostLoaded:number;attempts:number}|null>(null);
   const [step,setStep]=useState(0),[playing,setPlaying]=useState(false),[boxList,setBoxList]=useState(false);
   const [automatic,setAutomatic]=useState(true),[supplyRound,setSupplyRound]=useState(1);
   const [sequential,setSequential]=useState(false),[arrival,setArrival]=useState<Arrival|null>(null),[arrivalTick,setArrivalTick]=useState(0);
@@ -96,7 +96,7 @@ export function App() {
       const input=automatic?generateBoxes(count,inputSeed):activeBoxes;
       validateConfig(input,truck,settings,weights);
       if(!automatic&&Object.keys(fixed).length===activeBoxes.length&&sequential)throw Error('모든 도착 상자가 적재되었습니다. 다음 상자를 도착시키세요.');
-      const {w,id}=createWorker();setHistory([]);setSelected(null);setAllocationProgress(null);setStep(0);setPlaying(false);setMessage('');setFollow(true);setApplied({...weights});setState('실행');
+      const {w,id}=createWorker();setHistory([]);setSelected(null);setAllocationProgress({generation:1,boxes:input.length,population:settings.population,ready:0,mostLoaded:0,attempts:0});setStep(0);setPlaying(false);setMessage('');setFollow(true);setApplied({...weights});setState('실행');
       if(automatic){setBoxes(input);setSupplyRound(1);}
       w.postMessage({type:'start',run:id,boxes:input,truck,settings,weights,fixed:automatic?{}:fixed,arrival:sequential,automatic,inputSeed,requireFullAllocation:true} satisfies Command);
     }catch(e){setMessage((e as Error).message);}
@@ -135,7 +135,7 @@ export function App() {
   const summaries=useMemo(()=>[...new Set(results.map(r=>r.condition))].map(condition=>{const rows=results.filter(r=>r.condition===condition);const avg=(k:'gaScore'|'randomScore'|'gaMoves'|'randomMoves'|'gaMass'|'randomMass')=>rows.reduce((a,b)=>a+b[k],0)/rows.length;return {condition,ga:avg('gaScore'),random:avg('randomScore'),moves:avg('gaMoves'),mass:avg('gaMass'),loaded:rows.reduce((n,r)=>n+r.gaLoaded,0)/rows.length};}),[results]);
   return <div className="app">
     <header className="topbar"><a className="brand" href="#"><span className="brand-mark">▥</span> LOADLAB<span className="brand-sub">적재 진화 실험실</span></a><div className="header-meta"><span className="local-dot"/>로컬 시뮬레이션<span className="separator"/>GENETIC ALGORITHM</div></header>
-    <div className="page-heading"><div><div className="eyebrow">TRUCK LOADING / EVOLUTION LAB</div><h1>더 많이, 덜 옮기며 싣다<span>.</span></h1><p>상차 순서와 위치를 진화시켜 적재량을 높이고 재배치를 줄입니다.</p></div><div className={`status status-${state}`} role="status"><i/>{state}<span>{allocationProgress&&busy?`${allocationProgress.generation}세대 준비 · 할당 완료 ${allocationProgress.ready}/${allocationProgress.population}개체 · 상자 ${allocationProgress.mostLoaded}/${allocationProgress.boxes}개`:latest?automatic?`공급 ${latest.round??1}회차 · ${((latest.number-1)%settings.generations)+1}/${settings.generations}세대`:`${latest.number} / ${settings.generations} 세대`:'실행 대기'}</span></div></div>
+    <div className="page-heading"><div><div className="eyebrow">TRUCK LOADING / EVOLUTION LAB</div><h1>더 많이, 덜 옮기며 싣다<span>.</span></h1><p>상차 순서와 위치를 진화시켜 적재량을 높이고 재배치를 줄입니다.</p></div><div className={`status status-${state}`} role="status"><i/>{state}<span>{allocationProgress&&busy?`${allocationProgress.generation}세대 준비 · 할당 완료 ${allocationProgress.ready}/${allocationProgress.population}개체 · 상자 ${allocationProgress.mostLoaded}/${allocationProgress.boxes}개 · ${allocationProgress.attempts}회 시도`:latest?automatic?`공급 ${latest.round??1}회차 · ${((latest.number-1)%settings.generations)+1}/${settings.generations}세대`:`${latest.number} / ${settings.generations} 세대`:'실행 대기'}</span></div></div>
     <section className="metrics" aria-label="진화 요약"><div><small>현재 최고 적합도</small><strong>{latest?number(latest.best):'—'}<span>점</span></strong></div><div><small>이번 공급 초기 대비</small><strong className="green">{versionMatch?`${latest!.best-first!.best>=0?'+':''}${number(latest!.best-first!.best)}`:'—'}<span>{versionMatch?'점':'동일 가중치 기준'}</span></strong></div><div><small>검토한 배치</small><strong>{latest?number(latest.evaluations):'0'}<span>개</span></strong></div><div className="metric-spark"><small>세대별 최고 점수</small><svg viewBox="0 0 230 45" aria-label="세대별 최고 적합도 추이">{roundHistory.length>1&&(()=>{const min=Math.min(...roundHistory.map(g=>g.best)),max=Math.max(...roundHistory.map(g=>g.best));return <polyline points={roundHistory.map((g,i)=>`${i/(roundHistory.length-1)*230},${40-(g.best-min)/Math.max(1,max-min)*34}`).join(' ')} fill="none" stroke="#198160" strokeWidth="2"/>;})()}</svg></div></section>
     <main className="workspace">
       <div className="left-column">
@@ -266,3 +266,8 @@ createRoot(document.getElementById('root')!).render(<App/>);
 ## 2026-11-16 23:16:42 (KST) 전체 할당 조건 추가
 
 현재 웹·비교 실험은 할당된 상자를 전부 실제 적재한 개체로만 세대를 구성한다. 유효 집단이 완성되기 전에는 세대를 올리지 않는다. 짐칸100% 조건과 다르며 상차 목적·기존 재이동 정의는 유지한다.30개 테스트·빌드 및 기본20개/3세대 전체 적재 확인. 상세 입력·복구·진행률·실패·호환 경로·재이동 정의: `Info/plan/2026-11-16/231642_할당상자전부배치세대조건과재이동정의_plan.md`.
+
+
+## 2026-11-16 23:55:04 (KST) 첫 세대 지연 수정
+
+전체 코드 스냅샷을 현재 소스와 맞췄다. 비기본35개 지연 재현·compact 배치 보완·준비 진행률과 시도 표시. 목적·세대 완료 조건·재이동 정의 유지. 상세 결과와 한계: `Info/plan/2026-11-16/235504_1세대지연과비기본설정검증_plan.md`.34개 테스트·빌드 통과.

@@ -38,7 +38,7 @@ export class Engine {
     const prefix=a.loadOrder.slice(0,cut);
     const loadOrder=cross?[...prefix,...b.loadOrder.filter(id=>!prefix.includes(id))]:[...a.loadOrder];
     if(loadOrder.length>1&&this.rng.next()<this.settings.mutation){const i=this.rng.int(0,loadOrder.length-1),j=this.rng.int(0,loadOrder.length-1);[loadOrder[i],loadOrder[j]]=[loadOrder[j],loadOrder[i]];mutated=true;}
-    const result=pack(this.boxes,this.truck,this.rng,coords,this.fixed,true);
+    const result=pack(this.boxes,this.truck,this.rng,coords,this.fixed,true,this.requireFullAllocation);
     if(!result)return null;
     return {...result,loadOrder,parents:cross?[a.id,b.id]:[a.id],operation:cross?(mutated?'교차·변이':'교차'):(mutated?'변이':'선택 복제')};
   }
@@ -69,7 +69,7 @@ export class Engine {
       if(++attempts>this.settings.population*120) throw Error(`할당 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
       this.allocationProgress.attempts=attempts;
       const child=this.population.length?this.offspring():null;
-      const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true);
+      const candidate=this.population.length?child:pack(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation);
       if(candidate) {
         let p=this.evaluate(candidate.coords,child?.parents??[],child?.operation??'초기 무작위',candidate.repaired,child?.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.

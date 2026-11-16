@@ -56,3 +56,12 @@ test('Worker는 불가능한 전체 할당에서 다음 세대를 보내지 않�
  const {boxes}=initial();scope.self.onmessage({data:{type:'start',run:108,boxes:boxes.slice(0,2),truck:{width:20,depth:20,height:20},settings:{...DEFAULT_SETTINGS,population:3,generations:2},weights:DEFAULT_WEIGHTS,fixed:{},arrival:false,automatic:false,requireFullAllocation:true}});
  const timeout=setTimeout(finish,2000);await done;clearTimeout(timeout);assert.equal(generations,0);assert.match(error,/총부피/);
 });
+
+test('비기본35상자·가중치·집단24 설정이 실제 Worker에서 첫 세대로 전달된다',async()=>{
+ const {generateBoxes}=await import('../src/domain/model');
+ const scope=globalThis as any;let result:any,error='';let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});
+ scope.postMessage=(m:any)=>{if(m.type==='generation'){result=m.generation;scope.self.onmessage({data:{type:'stop',run:109}});finish();}if(m.type==='error'){error=m.message;finish();}};
+ scope.self.onmessage({data:{type:'start',run:109,boxes:generateBoxes(35,731),truck:{width:180,depth:400,height:180},settings:{...DEFAULT_SETTINGS,population:24,seed:913,crossover:.7,mutation:.2,tournament:4,generations:5},weights:{base:135,moves:4,mass:.5,space:35},fixed:{},arrival:false,automatic:true,inputSeed:731,requireFullAllocation:true}});
+ const timeout=setTimeout(()=>{scope.self.onmessage({data:{type:'stop',run:109}});finish();},15000);await done;clearTimeout(timeout);
+ assert.equal(error,'');assert.ok(result,'Worker 첫 세대 응답 없음');assert.equal(result.number,1);assert.equal(result.attempts,24);assert.equal(result.individuals.length,24);assert.ok(result.individuals.every((p:any)=>p.evaluation.loaded===35));
+});
