@@ -148,3 +148,8 @@ Packing/Evolution/EvolutionView/ResultExport기존ID재사용. 최종공통범�
 ## 2026-11-17 14:33:01 KST 우선순 전량 하차 최종 조건
 
 Unloading/Evolution/EvolutionView기존ID재사용. 전개체전량하차를엘리트/부모/후보/세대확정에서강제검사.97개검사·99조건범위검사·로컬/Pages재생통과. 새독립문제없음. `Info/plan/2026-11-17/142042_우선순전량하차세대완료조건_plan.md`.
+
+
+## 2026-11-17 15:19:49 KST 현재 구현 기법 종합 보고서
+
+기존 전체 기능ID의 현재 실제 호출 경로를 대조했다. 보고서 `Info/report/2026-11-17/151740_현재구현기법종합_report.md`은 소스24개·시험14개·스크립트5개·설정/출처8개를 포함하며,현재웹우선순하차와호환상차·미적용하중을구분한다. 코드는변경하지않았다. 실험안내불일치SW_Browser_EvolutionView_Unresolved_Bug_004는해당기능problem참조.
