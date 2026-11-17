@@ -70,5 +70,7 @@ export function* priorityUnloadSteps(boxes:Box[],coords:Vec[],truck:Truck,trace=
   }
   yield;
  }
+ // 모든 고유 상자의 배송 완료와 짐칸 내부 잔여0을 확인한다. 임시 이동은 배송으로 세지 않는다.
+ if(result.delivered!==n||activeCount!==0||delivered.some(value=>!value)){result.valid=false;result.reason='모든 상자의 우선순 하차가 완료되지 않았습니다.';}
  return result;
 }

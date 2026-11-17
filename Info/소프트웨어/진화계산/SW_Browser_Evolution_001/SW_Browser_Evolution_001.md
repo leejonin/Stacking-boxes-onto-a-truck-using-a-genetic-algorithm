@@ -65,16 +65,16 @@ export class Engine {
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
   }
-  /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
-  select():Individual {
-    let best=this.population[this.rng.int(0,this.population.length-1)];
-    for(let k=1;k<this.settings.tournament;k++) {const p=this.population[this.rng.int(0,this.population.length-1)];if(p.score>best.score)best=p;}
+  /** 주어진 부모 풀(생략하면 현재 집단)에서 토너먼트로 선택한다. 음수 점수도 그대로 비교한다. */
+  select(pool=this.population):Individual {
+    let best=pool[this.rng.int(0,pool.length-1)];
+    for(let k=1;k<this.settings.tournament;k++) {const p=pool[this.rng.int(0,pool.length-1)];if(p.score>best.score)best=p;}
     return best;
   }
-  /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
-  offspring(): {coords:Vec[];loadOrder:number[];repairOrder?:number[];parents:string[];operation:string;repaired:boolean}|null {
+  /** 지정한 완료 부모 풀의 좌표를 1점 교차·변이하고 물리 조건을 복구한다. */
+  offspring(pool=this.population): {coords:Vec[];loadOrder:number[];repairOrder?:number[];parents:string[];operation:string;repaired:boolean}|null {
     const useRepair=this.partitionMode||this.priorityUnloading;
-    const a=this.select(),b=this.select();const cross=this.rng.next()<effectiveCrossover(this.settings.crossover) && this.boxes.length>1;
+    const a=this.select(pool),b=this.select(pool);const cross=this.rng.next()<effectiveCrossover(this.settings.crossover) && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
@@ -117,48 +117,56 @@ export class Engine {
     this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
     if((this.requireFullAllocation||this.priorityUnloading)&&evaluation.loaded!==this.boxes.length)return null;
     const extra=this.priorityUnloading?yield* simulateSteps(this.boxes,evaluation.finalCoords,this.truck,false,true):null;
-    if(extra&&!extra.valid)return null;
+    if(extra&&(!extra.valid||extra.delivered!==this.boxes.length))return null;
     const unloading=extra?{valid:extra.valid,reason:extra.reason,moves:extra.moves,mass:extra.mass,delivered:extra.delivered}:undefined;
     return {...(unloading?{unloading,unloadOrder:priorityOrder(this.boxes).map(b=>b.id)}:{}),id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:unloading?priorityFitness(evaluation,unloading,this.weights):loadingFitness(evaluation,this.weights),version:this.version};
   }
   /** 독립 동기 호출도 동일 평가 경로를 사용한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {const it=this.evaluateSteps(coords,parents,operation,repaired,loadOrder);let r=it.next();while(!r.done)r=it.next();return r.value;}
+  /** 현재 할당의 전량 상차·우선순 전량 하차를 마친 개체만 세대와 부모 풀에 허용한다. */
+  private completedUnloading(p:Individual,order:number[]):boolean {
+    return p.evaluation.valid&&p.evaluation.loaded===order.length&&p.evaluation.unloadedIds.length===0&&!!p.unloading?.valid&&p.unloading.delivered===order.length&&p.unloadOrder?.length===order.length&&order.every((id,i)=>p.unloadOrder![i]===id);
+  }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
-    const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=this.priorityUnloading&&!!this.seedLayout&&!this.population.length&&!Object.keys(this.fixed).length;
+    const start=performance.now(),next:Individual[]=[],mustLoad=this.requireFullAllocation||this.priorityUnloading,order=this.priorityUnloading?priorityOrder(this.boxes).map(b=>b.id):[];let attempts=0,accepted=0,rescueInitial=false;
     this.allocationProgress={ready:0,attempts:0,mostLoaded:0};
-    if(this.requireFullAllocation){
+    if(mustLoad){
       if(this.boxes.some(b=>b.size.some((v,i)=>v>[this.truck.width,this.truck.depth,this.truck.height][i])))throw Error('할당 상자 중 짐칸 치수를 넘는 상자가 있어 전부 배치할 수 없습니다. 초기화 후 입력을 조정하세요.');
       if(this.boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)>this.truck.width*this.truck.depth*this.truck.height)throw Error('할당 상자의 총부피가 짐칸보다 큽니다. 다음 세대로 넘어가지 않습니다. 초기화 후 할당 개수를 줄이세요.');
     }
-    const eligible=this.requireFullAllocation?this.population.filter(p=>p.evaluation.loaded===this.boxes.length):this.population;
+    const eligible=this.priorityUnloading?this.population.filter(p=>this.completedUnloading(p,order)):this.requireFullAllocation?this.population.filter(p=>p.evaluation.loaded===this.boxes.length):this.population;
+    const parents=this.priorityUnloading?eligible:this.population,hasParents=parents.length>0;
+    rescueInitial=this.priorityUnloading&&!!this.seedLayout&&!hasParents&&!Object.keys(this.fixed).length;
     if(eligible.length) {
       const best=eligible.reduce((a,b)=>a.score>=b.score?a:b);
       next.push({...best,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[best.id],operation:'엘리트',coords:best.coords.map(p=>[...p] as Vec)});
       this.allocationProgress.ready=next.length;this.allocationProgress.mostLoaded=best.evaluation.loaded;
     }
     while(next.length<this.settings.population) {
-      if(++attempts>this.settings.population*120) throw Error(`할당 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
+      if(++attempts>this.settings.population*120) throw Error(`${this.priorityUnloading?'전량 상차·우선순 전량 하차':'할당'} 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
       this.allocationProgress.attempts=attempts;
-      const child=this.population.length?this.offspring():null;
+      const child=hasParents?this.offspring(parents):null;
       // 최초 시도가 실패해 완전 후보가 하나도 없을 때만 초기화 전략을 전환한다.
       // 기존 초기 집단이 바로 생성되는 입력은 후보·난수 순서를 그대로 유지한다.
-      rescueInitial ||= !this.population.length&&this.requireFullAllocation&&attempts>1&&!next.length&&!Object.keys(this.fixed).length;
+      rescueInitial ||= !hasParents&&mustLoad&&attempts>1&&!next.length&&!Object.keys(this.fixed).length;
       const rescue=rescueInitial;
       if(rescue)this.partitionMode=true;
-      const candidate=this.population.length?child:rescue?this.rescuePack():(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
+      const candidate=hasParents?child:rescue?this.rescuePack():(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,mustLoad,mustLoad));
       if(candidate) {
         this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,candidate.coords.filter(p=>p[0]>=0).length);
         let p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
-        if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
+        if(!p&&mustLoad&&candidate.coords.every(v=>v[0]>=0)){
           const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed)??(this.priorityUnloading&&!Object.keys(this.fixed).length?dependencyLoadingOrder(this.boxes,candidate.coords):null);
           if(order)p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
         }
-        if(p) {this.diverseFailures=0;next.push(p);accepted++;this.allocationProgress.ready=next.length;}
+        if(p&&(!this.priorityUnloading||this.completedUnloading(p,order))) {this.diverseFailures=0;next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }
+    // 모든 후보 수집 후에도 전량 하차 조건을 재검사한 다음에만 집단·세대 번호를 함께 확정한다.
+    if(this.priorityUnloading&&!next.every(p=>this.completedUnloading(p,order)))throw Error('전량 하차를 완료하지 못한 개체가 있어 다음 세대를 확정할 수 없습니다.');
     this.population=next;this.generation++;
     return {...(this.priorityUnloading?{objective:'priority-unload' as const}:{}),number:this.generation,individuals:next,best:Math.max(...next.map(p=>p.score)),mean:next.reduce((a,b)=>a+b.score,0)/next.length,version:this.version,attempts,accepted,evaluations:this.evaluations,elapsed:performance.now()-start};
   }
@@ -534,3 +542,28 @@ model.CONFIG_RANGES를UI속성·Worker웹검증·11단계검사의단일범위�
 배포: gh-pages85e42214ccd315e46749eb64ea4f5691eb7dad31,Pages43929516607 success,UI index-CmmI9d1A.js/Worker evolution-BxiEfROi.js. 기존Public전체프로젝트승인으로소스·문서push예정. 남은확인범위내문제없음. 모든seed/실수값/최대입력전체직교곱의성공·일정시간을보장하지않는다.
 
 상세목표·승인·환경·작동및검증은 `Info/plan/2026-11-17/031259_설정범위와10퍼센트단계검증_plan.md`. 위전체소스는현재코드다.
+
+
+## 2026-11-17 14:33:01 KST 우선순 전량 하차 최종 조건
+
+사용자 승인: 높은우선도상자를빨간차목표,낮은우선도방해상자를이동비용의대상으로보는비유에동의하고전량하차를다음세대전환의최종조건으로명시했다. 기존모듈의높은우선도→동점ID하차,방해물out/return각1회·해당kg감점,목표배송deliver감점제외는유지했다. 새실패5점감점·새이동물리·우선도별가중치배수는추가하지않았다.
+
+변경전Engine.evaluateSteps는하차valid를확인했지만delivered의할당수일치명시검사는없었다. 세대엘리트는상차loaded수만검사했고부모선택은원래집단을사용했다. 현재정상하차모듈은원래모두배송하고valid를반환했으며,과거실제부분하차유효결과가발생했다는증거는없다. 이번변경은추가된최종조건을코드의명시적인승인규칙으로강화한것이다.
+
+변경후completedUnloading은현재할당의전량상차valid/loaded=n/unloadedIds빈목록,하차valid/delivered=n,현재입력의우선순ID열과동일한unloadOrder를요구한다. 이조건을엘리트와부모풀필터·새후보수집·최종세대확정에같이사용한다. select/offspring의pool인수는생략시기존집단이며우선순하차모드에서는완료부모풀만전달한다. 미완료고득점캐시가있어도엘리트/부모로선택하지않는다.
+
+평가기는하차valid여도delivered가할당수와다르면후보를거부한다. priorityUnloadSteps의마지막에서는delivered=n/activeCount=0/모든고유상자배송비트완료를검사한다. 임시꺼냄은배송완료로집계하지않는다. next는전체설정집단수의유효개체를모은뒤다시전원완료를검사하고그때에만population과generation을확정한다. 실패후보는제외하고새후보를재시도하며유한탐색안에완료집단을못만들면이전세대번호/집단을유지한다. 단독priorityUnloading=true도전량상차의물리사전검사·복구조건을사용한다. 구상차호환모드의선택/해시동작은유지했다.
+
+UI준비진행은‘상차·하차완료N/집단수’로표시하고입력설정에도전원전량하차후다음세대조건을명시했다. 완료는하차시뮬레이션계산의완료이며3D재생은계산된기록의확인이다. 모든개체의애니메이션재생이끝날때까지GA를대기시키는동작은추가하지않았다.
+
+검사:97개통과/실패0,전체약62.5초. 새7개는실제P5목표뒤/P1방해물앞의out2→deliver1→return2→deliver2와2회/6kg·26점감점(같은보상120→94),동점ID,미완료/실패/잘못된순서/기록없는고득점엘리트·부모제외,부분후보수집거부,실패시이전세대유지,수집중메타데이터손상시최종확정거부,실제생성기중간yield시세대번호0유지를검사한다. 테스트전용부분결과·캐시손상은회귀검사장치이며운영코드에오류를넣거나실제발생버그라고기록하지않는다.
+
+97개전체검사에는기본짐칸256/360/400개·집단50·2세대전량적재/배송,10001세대와묶음메시지/부모연결,100/220일시정지·재개,기존35/48상차호환해시와하차이벤트해시·모든이벤트안전/ID/비용·내보내기등이포함된다. 별도npm run range-test도99조건(실행98/집단0안내1),55,272세대/588재생전이를다시통과했다. 타입검사/production빌드통과. 기존큰번들경고유지.
+
+로컬기본설정에서자동공급을끄고100상자·집단50·2세대를실행했다. 준비화면‘상차·하차완료0/50’,2세대완료,미적재0/우선순하차100개를확인했다. 선택개체g2-i73의마지막배송#59/P1에서누적1484회/7283.4kg이선택평가와일치했고짐칸안이비었다. 콘솔오류·경고0. 실제증거docs/images/unloading-all-complete.jpg,짐칸밖기존팔레트소품은입력상자가아니다.
+
+공개배포도20상자·집단8·3세대를실행해완료와마지막배송#8/P1·22회/44.4kg재생을확인했다. 새UI index-BQ36xy56.js/Worker evolution-CS94fxQO.js,gh-pages f0affab2e847b16b55cbecacea26c2fe597ddaea,Pages44024324653 success. 공개콘솔오류·경고0. 기존Public전체프로젝트승인으로이번소스·문서를반영한다.
+
+검사범위내새독립문제없음. 모든입력의물리적포장가능성/최적해/일정완료시간을보장하지않고,전량하차실패후보를점수만으로통과시키지않는다. 임시대기공간·직선인출·전체밑면지지등기존모델가정은유지한다. 환경Info/기술환경.md,새의존성없음.
+
+계획·승인·처리·검증·한계는 `Info/plan/2026-11-17/142042_우선순전량하차세대완료조건_plan.md`. 위전체코드는현재구현이다.

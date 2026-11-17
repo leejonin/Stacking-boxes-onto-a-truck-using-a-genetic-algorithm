@@ -20,16 +20,16 @@ export class Engine {
   constructor(public boxes:Box[],public truck:Truck,public settings:Settings,public weights:Weights,public fixed:Record<number,Vec>={},public requireLoading=false) {
     validateConfig(boxes,truck,settings,weights); this.rng=new Random(settings.seed);
   }
-  /** 같은 상태에서 토너먼트로 부모를 선택한다. 음수 점수도 그대로 비교한다. */
-  select():Individual {
-    let best=this.population[this.rng.int(0,this.population.length-1)];
-    for(let k=1;k<this.settings.tournament;k++) {const p=this.population[this.rng.int(0,this.population.length-1)];if(p.score>best.score)best=p;}
+  /** 주어진 부모 풀(생략하면 현재 집단)에서 토너먼트로 선택한다. 음수 점수도 그대로 비교한다. */
+  select(pool=this.population):Individual {
+    let best=pool[this.rng.int(0,pool.length-1)];
+    for(let k=1;k<this.settings.tournament;k++) {const p=pool[this.rng.int(0,pool.length-1)];if(p.score>best.score)best=p;}
     return best;
   }
-  /** 상자별 좌표 묶음 1점 교차와 유효 위치 변이, 최소 배치 수정을 수행한다. */
-  offspring(): {coords:Vec[];loadOrder:number[];repairOrder?:number[];parents:string[];operation:string;repaired:boolean}|null {
+  /** 지정한 완료 부모 풀의 좌표를 1점 교차·변이하고 물리 조건을 복구한다. */
+  offspring(pool=this.population): {coords:Vec[];loadOrder:number[];repairOrder?:number[];parents:string[];operation:string;repaired:boolean}|null {
     const useRepair=this.partitionMode||this.priorityUnloading;
-    const a=this.select(),b=this.select();const cross=this.rng.next()<effectiveCrossover(this.settings.crossover) && this.boxes.length>1;
+    const a=this.select(pool),b=this.select(pool);const cross=this.rng.next()<effectiveCrossover(this.settings.crossover) && this.boxes.length>1;
     const cut=cross?this.rng.int(1,this.boxes.length-1):this.boxes.length;
     const coords=this.boxes.map((_,i)=>[...(i<cut?a.coords[i]:b.coords[i])] as Vec);let mutated=false;
     for(let i=0;i<coords.length;i++) {
@@ -72,48 +72,56 @@ export class Engine {
     this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,evaluation.loaded);
     if((this.requireFullAllocation||this.priorityUnloading)&&evaluation.loaded!==this.boxes.length)return null;
     const extra=this.priorityUnloading?yield* simulateSteps(this.boxes,evaluation.finalCoords,this.truck,false,true):null;
-    if(extra&&!extra.valid)return null;
+    if(extra&&(!extra.valid||extra.delivered!==this.boxes.length))return null;
     const unloading=extra?{valid:extra.valid,reason:extra.reason,moves:extra.moves,mass:extra.mass,delivered:extra.delivered}:undefined;
     return {...(unloading?{unloading,unloadOrder:priorityOrder(this.boxes).map(b=>b.id)}:{}),id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents,operation,repaired,coords,loadOrder,evaluation,score:unloading?priorityFitness(evaluation,unloading,this.weights):loadingFitness(evaluation,this.weights),version:this.version};
   }
   /** 독립 동기 호출도 동일 평가 경로를 사용한다. */
   evaluate(coords:Vec[],parents:string[],operation:string,repaired:boolean,loadOrder=this.boxes.map(b=>b.id)):Individual|null {const it=this.evaluateSteps(coords,parents,operation,repaired,loadOrder);let r=it.next();while(!r.done)r=it.next();return r.value;}
+  /** 현재 할당의 전량 상차·우선순 전량 하차를 마친 개체만 세대와 부모 풀에 허용한다. */
+  private completedUnloading(p:Individual,order:number[]):boolean {
+    return p.evaluation.valid&&p.evaluation.loaded===order.length&&p.evaluation.unloadedIds.length===0&&!!p.unloading?.valid&&p.unloading.delivered===order.length&&p.unloadOrder?.length===order.length&&order.every((id,i)=>p.unloadOrder![i]===id);
+  }
   /** 개체 한 번 시도마다 양보하여 Worker가 정지·취소 메시지를 처리하게 한다. */
   *next():Generator<void,Generation,void> {
-    const start=performance.now(),next:Individual[]=[];let attempts=0,accepted=0,rescueInitial=this.priorityUnloading&&!!this.seedLayout&&!this.population.length&&!Object.keys(this.fixed).length;
+    const start=performance.now(),next:Individual[]=[],mustLoad=this.requireFullAllocation||this.priorityUnloading,order=this.priorityUnloading?priorityOrder(this.boxes).map(b=>b.id):[];let attempts=0,accepted=0,rescueInitial=false;
     this.allocationProgress={ready:0,attempts:0,mostLoaded:0};
-    if(this.requireFullAllocation){
+    if(mustLoad){
       if(this.boxes.some(b=>b.size.some((v,i)=>v>[this.truck.width,this.truck.depth,this.truck.height][i])))throw Error('할당 상자 중 짐칸 치수를 넘는 상자가 있어 전부 배치할 수 없습니다. 초기화 후 입력을 조정하세요.');
       if(this.boxes.reduce((n,b)=>n+b.size[0]*b.size[1]*b.size[2],0)>this.truck.width*this.truck.depth*this.truck.height)throw Error('할당 상자의 총부피가 짐칸보다 큽니다. 다음 세대로 넘어가지 않습니다. 초기화 후 할당 개수를 줄이세요.');
     }
-    const eligible=this.requireFullAllocation?this.population.filter(p=>p.evaluation.loaded===this.boxes.length):this.population;
+    const eligible=this.priorityUnloading?this.population.filter(p=>this.completedUnloading(p,order)):this.requireFullAllocation?this.population.filter(p=>p.evaluation.loaded===this.boxes.length):this.population;
+    const parents=this.priorityUnloading?eligible:this.population,hasParents=parents.length>0;
+    rescueInitial=this.priorityUnloading&&!!this.seedLayout&&!hasParents&&!Object.keys(this.fixed).length;
     if(eligible.length) {
       const best=eligible.reduce((a,b)=>a.score>=b.score?a:b);
       next.push({...best,id:`g${this.generation+1}-i${++this.serial}`,generation:this.generation+1,parents:[best.id],operation:'엘리트',coords:best.coords.map(p=>[...p] as Vec)});
       this.allocationProgress.ready=next.length;this.allocationProgress.mostLoaded=best.evaluation.loaded;
     }
     while(next.length<this.settings.population) {
-      if(++attempts>this.settings.population*120) throw Error(`할당 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
+      if(++attempts>this.settings.population*120) throw Error(`${this.priorityUnloading?'전량 상차·우선순 전량 하차':'할당'} 조건을 만족하는 유효 집단을 생성하지 못했습니다 (${next.length}/${this.settings.population}). 현재 세대는 유지됩니다. 초기화 후 입력·적재함·고정 배치를 확인하세요.`);
       this.allocationProgress.attempts=attempts;
-      const child=this.population.length?this.offspring():null;
+      const child=hasParents?this.offspring(parents):null;
       // 최초 시도가 실패해 완전 후보가 하나도 없을 때만 초기화 전략을 전환한다.
       // 기존 초기 집단이 바로 생성되는 입력은 후보·난수 순서를 그대로 유지한다.
-      rescueInitial ||= !this.population.length&&this.requireFullAllocation&&attempts>1&&!next.length&&!Object.keys(this.fixed).length;
+      rescueInitial ||= !hasParents&&mustLoad&&attempts>1&&!next.length&&!Object.keys(this.fixed).length;
       const rescue=rescueInitial;
       if(rescue)this.partitionMode=true;
-      const candidate=this.population.length?child:rescue?this.rescuePack():(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,this.requireFullAllocation,this.requireFullAllocation));
+      const candidate=hasParents?child:rescue?this.rescuePack():(yield* packSteps(this.boxes,this.truck,this.rng,attempts===1?this.seedLayout:undefined,this.fixed,true,mustLoad,mustLoad));
       if(candidate) {
         this.allocationProgress.mostLoaded=Math.max(this.allocationProgress.mostLoaded,candidate.coords.filter(p=>p[0]>=0).length);
         let p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],child?.operation??(rescue?'초기 구획 배치':'초기 무작위'),candidate.repaired,child?.loadOrder??candidate.loadOrder??this.rng.shuffle(this.boxes.map(b=>b.id)));
         // 완전 적재가 가능한 좌표라면 순서 유전자 복구도 시도한다. 평가기는 주어진 순서를 그대로 실행한다.
-        if(!p&&this.requireFullAllocation&&candidate.coords.every(v=>v[0]>=0)){
+        if(!p&&mustLoad&&candidate.coords.every(v=>v[0]>=0)){
           const order=child?.repairOrder??loadingOrder(this.boxes,candidate.coords,this.truck,this.fixed)??(this.priorityUnloading&&!Object.keys(this.fixed).length?dependencyLoadingOrder(this.boxes,candidate.coords):null);
           if(order)p=yield* this.evaluateSteps(candidate.coords,child?.parents??[],`${child?.operation??'초기 무작위'}·상차순서 복구`,candidate.repaired,[...this.boxes.filter(b=>this.fixed[b.id]).map(b=>b.id),...order]);
         }
-        if(p) {this.diverseFailures=0;next.push(p);accepted++;this.allocationProgress.ready=next.length;}
+        if(p&&(!this.priorityUnloading||this.completedUnloading(p,order))) {this.diverseFailures=0;next.push(p);accepted++;this.allocationProgress.ready=next.length;}
       }
       yield;
     }
+    // 모든 후보 수집 후에도 전량 하차 조건을 재검사한 다음에만 집단·세대 번호를 함께 확정한다.
+    if(this.priorityUnloading&&!next.every(p=>this.completedUnloading(p,order)))throw Error('전량 하차를 완료하지 못한 개체가 있어 다음 세대를 확정할 수 없습니다.');
     this.population=next;this.generation++;
     return {...(this.priorityUnloading?{objective:'priority-unload' as const}:{}),number:this.generation,individuals:next,best:Math.max(...next.map(p=>p.score)),mean:next.reduce((a,b)=>a+b.score,0)/next.length,version:this.version,attempts,accepted,evaluations:this.evaluations,elapsed:performance.now()-start};
   }

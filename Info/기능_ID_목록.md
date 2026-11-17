@@ -143,3 +143,8 @@ Packing/EvolutionView/Evolution/Arrival 기존 ID 사용. 최신 입력 범위1~
 ## 2026-11-17 03:34:49 KST 설정 범위와11단계 검증
 
 Packing/Evolution/EvolutionView/ResultExport기존ID재사용. 최종공통범위와0집단안내·1.1교차실효100%,변이전수탐색/장기세대대기수정.90개검사/99조건/10001완주·재생확인. `Info/plan/2026-11-17/031259_설정범위와10퍼센트단계검증_plan.md`, `Info/report/2026-11-17/2026-11-17_033449_설정범위11단계검사_report.md`.
+
+
+## 2026-11-17 14:33:01 KST 우선순 전량 하차 최종 조건
+
+Unloading/Evolution/EvolutionView기존ID재사용. 전개체전량하차를엘리트/부모/후보/세대확정에서강제검사.97개검사·99조건범위검사·로컬/Pages재생통과. 새독립문제없음. `Info/plan/2026-11-17/142042_우선순전량하차세대완료조건_plan.md`.
